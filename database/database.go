@@ -146,14 +146,17 @@ func (db *DB) BlockedSkylinkSave(ctx context.Context, skylink *BlockedSkylink) e
 	return nil
 }
 
-// SkylinksToBlock sweeps the database for new skylinks.
+// SkylinksToBlock sweeps the database for new skylinks. It uses the latest
+// block timestamp for this server which is retrieves from the DB. It scans all
+// blocked skylinks from the hour before that timestamp, too, in order to
+// protect against system clock float.
 func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	cutoff, err := db.LatestBlockTimestamp()
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch the latest timestamp from the DB")
 	}
 
-	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff}}
+	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff.Add(-time.Hour)}}
 	c, err := db.DB.Collection(dbSkylinks).Find(db.Ctx, filter)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")

@@ -147,8 +147,8 @@ func (bl Blocker) Start() {
 		// run out of files to scan we'll reset it to its full duration of
 		// sleepBetweenScans.
 		sleepLength := sleepBetweenScans
+		numSubsequentErrs := 0
 		for {
-			numSubsequentErrs := 0
 			select {
 			case <-bl.staticCtx.Done():
 				return
@@ -219,5 +219,5 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 // authHeader returns the value we need to set to the `Authorization` header in
 // order to call `skyd`.
 func authHeader() string {
-	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte("user:"+api.SkydAPIPassword)))
+	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(":"+api.SkydAPIPassword)))
 }
