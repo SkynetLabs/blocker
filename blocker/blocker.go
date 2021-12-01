@@ -148,7 +148,7 @@ func (bl Blocker) Start() {
 		// keep finding files to scan, we'll keep this sleep at zero. Once we
 		// run out of files to scan we'll reset it to its full duration of
 		// sleepBetweenScans.
-		sleepLength := sleepBetweenScans
+		var sleepLength time.Duration
 		numSubsequentErrs := 0
 		for {
 			select {
