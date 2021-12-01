@@ -56,6 +56,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	fmt.Println(skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {
+		fmt.Printf("block skylink err %v", skylink.Skylink)
 		skyapi.WriteJSON(w, "BlockedSkylink already exists in the database")
 		return
 	}
