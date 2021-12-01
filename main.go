@@ -121,6 +121,11 @@ func main() {
 		log.Fatal(errors.New("skyd down, exiting"))
 	}
 
+	api.SkydAPIPassword = os.Getenv("SIA_API_PASSWORD")
+	if api.SkydAPIPassword == "" {
+		log.Fatal(errors.New("SIA_API_PASSWORD is empty, exiting"))
+	}
+
 	// Initialise and start the background scanner task.
 	blockerThread, err := blocker.New(ctx, db, logger)
 	if err != nil {

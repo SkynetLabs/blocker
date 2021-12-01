@@ -9,7 +9,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/SkynetLabs/blocker/api"
@@ -200,7 +199,7 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 		return errors.AddContext(err, "failed to build request body")
 	}
 
-	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, strconv.FormatUint(uint64(skydTimeout), 10))
+	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, "30")
 	bl.staticLogger.Debugf("blockSkylinks: POST on ", url)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBodyBytes))
 	if err != nil {
