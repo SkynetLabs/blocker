@@ -27,7 +27,7 @@ const (
 
 var (
 	// skydTimeout is the timeout of the http calls to skyd in seconds
-	skydTimeout = 30 * time.Second
+	skydTimeout = "30"
 	// sleepBetweenScans defines how long the scanner should sleep after
 	// scanning the DB and not finding any skylinks to scan.
 	sleepBetweenScans = build.Select(
@@ -199,7 +199,7 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 		return errors.AddContext(err, "failed to build request body")
 	}
 
-	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, "30")
+	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, skydTimeout)
 	bl.staticLogger.Debugf("blockSkylinks: POST on ", url)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBodyBytes))
 	if err != nil {
