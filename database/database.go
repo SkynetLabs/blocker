@@ -239,7 +239,7 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	schema := map[string][]mongo.IndexModel{
 		dbSkylinks: {
 			{
-				Keys:    bson.D{{"skylink_unique", 1}},
+				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
 			},
 			{
