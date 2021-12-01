@@ -201,12 +201,14 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 	}
 
 	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, strconv.FormatUint(uint64(skydTimeout), 10))
+	bl.staticLogger.Debugf("blockSkylinks: POST on ", url)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBodyBytes))
 	if err != nil {
 		return errors.AddContext(err, "failed to build request to skyd")
 	}
 	req.Header.Set("User-Agent", "Sia-Agent")
 	req.Header.Set("Authorization", authHeader())
+	bl.staticLogger.Debugf("blockSkylinks: headers: %+v", req.Header)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return errors.AddContext(err, "failed to make request to skyd")
