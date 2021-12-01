@@ -91,6 +91,7 @@ func (bl Blocker) SweepAndBlock() error {
 	if err != nil {
 		return err
 	}
+	bl.staticLogger.Debugf("SweepAndBlock will block all these: %+v", skylinksToBlock)
 	// Sort the skylinks in order of appearance.
 	sort.Slice(skylinksToBlock, func(i, j int) bool {
 		return skylinksToBlock[i].TimestampAdded.Before(skylinksToBlock[j].TimestampAdded)
@@ -103,6 +104,7 @@ func (bl Blocker) SweepAndBlock() error {
 			end = len(skylinksToBlock)
 		}
 		chunk := skylinksToBlock[idx:end]
+		bl.staticLogger.Debugf("SweepAndBlock will block chunk: %+v", chunk)
 		block := make([]string, 0, len(chunk))
 		var latestTimestamp time.Time
 
@@ -216,7 +218,9 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 			bl.staticLogger.Warnf(errors.AddContext(err, "failed to parse response body after a failed call to skyd").Error())
 			respBody = []byte{}
 		}
-		return errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
+		err = errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
+		bl.staticLogger.Warnf(err.Error())
+		return err
 	}
 	return nil
 }
