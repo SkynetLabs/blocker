@@ -200,7 +200,7 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 	}
 
 	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, skydTimeout)
-	bl.staticLogger.Debugf("blockSkylinks: POST on ", url)
+	bl.staticLogger.Debugf("blockSkylinks: POST on %+s", url)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBodyBytes))
 	if err != nil {
 		return errors.AddContext(err, "failed to build request to skyd")

@@ -180,12 +180,14 @@ func (db *DB) LatestBlockTimestamp() (time.Time, error) {
 	if sr.Err() == mongo.ErrNoDocuments {
 		return time.Time{}, nil
 	}
-	var t time.Time
-	err := sr.Decode(&t)
+	var payload struct {
+		LatestBlock time.Time `bson:"latest_block"`
+	}
+	err := sr.Decode(&payload)
 	if err != nil {
 		return time.Time{}, errors.AddContext(err, "failed to deserialize the value from the DB")
 	}
-	return t, nil
+	return payload.LatestBlock, nil
 }
 
 // SetLatestBlockTimestamp sets the timestamp (timestampAdded) of the latest
