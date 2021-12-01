@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -33,6 +34,7 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 
 // blockPOST blocks a skylink
 func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	fmt.Println("POST /block")
 	var body BlockPOST
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
@@ -50,6 +52,8 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		Tags:           body.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
+	fmt.Printf("try block skylink %v", skylink.Skylink)
+	fmt.Println(skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {
 		skyapi.WriteJSON(w, "BlockedSkylink already exists in the database")
