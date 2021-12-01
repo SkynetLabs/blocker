@@ -244,12 +244,12 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
-				Options: options.Index().SetName("timestamp"),
+				Options: options.Index().SetName("timestamp_added"),
 			},
 		},
 		dbLatestBlockTimestamps: {
 			{
-				Keys:    bson.D{{"server_name_unique", 1}},
+				Keys:    bson.D{{"server_name", 1}},
 				Options: options.Index().SetName("server_name").SetUnique(true),
 			},
 		},
