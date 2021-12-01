@@ -175,6 +175,11 @@ func (bl Blocker) Start() {
 				numSubsequentErrs = 0
 				sleepLength = sleepBetweenScans
 			}
+			if err != nil {
+				bl.staticLogger.Debugf("SweepAndBlock error: %s", err.Error())
+			} else {
+				bl.staticLogger.Debugf("SweepAndBlock ran successfully.")
+			}
 		}
 	}()
 }
