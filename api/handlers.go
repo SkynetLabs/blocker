@@ -43,6 +43,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	}
 	body.Skylink, err = accdb.ExtractSkylinkHash(body.Skylink)
 	if err != nil {
+		fmt.Println("failed to extract skylink", err)
 		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
 		return
 	}
@@ -52,15 +53,16 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		Tags:           body.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
-	fmt.Printf("try block skylink %v", skylink.Skylink)
-	fmt.Println(skylink)
+	fmt.Printf("try block skylink %v\n", skylink.Skylink)
+	fmt.Println("skylink", skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {
-		fmt.Printf("block skylink err %v", skylink.Skylink)
+		fmt.Printf("block skylink exists err %v\n", skylink.Skylink)
 		skyapi.WriteJSON(w, "BlockedSkylink already exists in the database")
 		return
 	}
 	if err != nil {
+		fmt.Printf("block skylink err %v\n", skylink.Skylink)
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 		return
 	}
