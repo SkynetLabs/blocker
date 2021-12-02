@@ -126,6 +126,14 @@ func main() {
 		log.Fatal(errors.New("SIA_API_PASSWORD is empty, exiting"))
 	}
 
+	// Accounts.
+	if aHost := os.Getenv("SKYNET_ACCOUNTS_HOST"); aHost != "" {
+		api.AccountsHost = aHost
+	}
+	if aPort := os.Getenv("SKYNET_ACCOUNTS_PORT"); aPort != "" {
+		api.AccountsPort = aPort
+	}
+
 	// Initialise and start the background scanner task.
 	blockerThread, err := blocker.New(ctx, db, logger)
 	if err != nil {

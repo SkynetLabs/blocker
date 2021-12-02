@@ -156,8 +156,12 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch the latest timestamp from the DB")
 	}
+	// Push cutoff one hour into the past in order to compensate of any
+	// potential system time drift.
+	cutoff = cutoff.Add(-time.Hour)
+	db.Logger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
 
-	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff.Add(-time.Hour)}}
+	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff}}
 	c, err := db.DB.Collection(dbSkylinks).Find(db.Ctx, filter)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
@@ -167,6 +171,7 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	if err != nil {
 		return nil, err
 	}
+	db.Logger.Tracef("SkylinksToBlock: returning list %v", list)
 	return list, nil
 }
 

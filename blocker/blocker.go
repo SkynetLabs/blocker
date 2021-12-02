@@ -9,6 +9,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/SkynetLabs/blocker/api"
@@ -85,12 +86,12 @@ func New(ctx context.Context, db *database.DB, logger *logrus.Logger) (*Blocker,
 func (bl Blocker) SweepAndBlock() error {
 	skylinksToBlock, err := bl.staticDB.SkylinksToBlock()
 	if errors.Contains(err, database.ErrNoDocumentsFound) {
-		return nil
+		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
 	}
 	if err != nil {
 		return err
 	}
-	bl.staticLogger.Debugf("SweepAndBlock will block all these: %+v", skylinksToBlock)
+	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToBlock)
 	// Sort the skylinks in order of appearance.
 	sort.Slice(skylinksToBlock, func(i, j int) bool {
 		return skylinksToBlock[i].TimestampAdded.Before(skylinksToBlock[j].TimestampAdded)
@@ -103,7 +104,7 @@ func (bl Blocker) SweepAndBlock() error {
 			end = len(skylinksToBlock)
 		}
 		chunk := skylinksToBlock[idx:end]
-		bl.staticLogger.Debugf("SweepAndBlock will block chunk: %+v", chunk)
+		bl.staticLogger.Tracef("SweepAndBlock will block chunk: %+v", chunk)
 		block := make([]string, 0, len(chunk))
 		var latestTimestamp time.Time
 
@@ -125,15 +126,25 @@ func (bl Blocker) SweepAndBlock() error {
 		}
 		// Block the collected skylinks.
 		err = bl.blockSkylinks(block)
-		if err != nil {
-			return errors.AddContext(err, "failed to block skylinks list")
+		if err != nil && !strings.Contains(err.Error(), "no entries updated") {
+			err = errors.AddContext(err, "failed to block skylinks list")
+			bl.staticLogger.Tracef("SweepAndBlock failed to block with error %s", err.Error())
+			return err
 		}
 		err = bl.staticDB.SetLatestBlockTimestamp(latestTimestamp)
-		if err != nil {
+		if err != nil && !strings.Contains(err.Error(), "no entries updated") {
+			bl.staticLogger.Tracef("SweepAndBlock failed to update timestamp: %s", err.Error())
 			return err
 		}
 	}
 
+	// After we loop over all outstanding skylinks to block, we set the time of
+	// the last scan to the current moment.
+	err = bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
+	if err != nil && !strings.Contains(err.Error(), "no entries updated") {
+		bl.staticLogger.Tracef("SweepAndBlock failed to update timestamp: %s", err.Error())
+		return err
+	}
 	return nil
 }
 
