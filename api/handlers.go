@@ -33,6 +33,11 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 
 // blockPOST blocks a skylink
 func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
+	w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
+	w.Header().Set("Access-Control-Allow-Credentials", "true")
+
 	var body BlockPOST
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
