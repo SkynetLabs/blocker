@@ -33,6 +33,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 			err = errors.AddContext(err, "failed to read skynet cookie")
 			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
@@ -46,6 +47,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 			err = errors.AddContext(err, "validateCookie: failed to talk to accounts")
 			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
@@ -57,6 +59,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
+			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 			api.staticLogger.Tracef("validateCookie: failed to talk to accounts, status code %d, body %s", aresp.StatusCode, string(b))
 			api2.WriteError(w, api2.Error{"Unauthorized"}, http.StatusUnauthorized)
