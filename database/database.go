@@ -127,9 +127,12 @@ func (db *DB) BlockedSkylinkByID(ctx context.Context, id primitive.ObjectID) (*B
 func (db *DB) BlockedSkylinkCreate(ctx context.Context, skylink *BlockedSkylink) error {
 	_, err := db.Skylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
-		db.Logger.Debugf("BlockedSkylinkCreate: mongodb error %s", err.Error())
+		db.Logger.Debugf("BlockedSkylinkCreate: duplicate key, returning '%s'", ErrSkylinkExists.Error())
 		// This skylink already exists in the DB.
 		return ErrSkylinkExists
+	}
+	if err != nil {
+		db.Logger.Debugf("BlockedSkylinkCreate: mongodb error '%s'", err.Error())
 	}
 	return err
 }

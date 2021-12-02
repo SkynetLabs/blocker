@@ -30,6 +30,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 		cookie, err := req.Cookie("skynet-jwt")
 		if err != nil {
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 			err = errors.AddContext(err, "failed to read skynet cookie")
 			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
 			return
@@ -39,13 +40,15 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 		areq.AddCookie(cookie)
 		aresp, err := http.DefaultClient.Do(areq)
 		if err != nil {
-			err = errors.AddContext(err, "")
+			w.Header().Set("Access-Control-Allow-Origin", "*")
+			err = errors.AddContext(err, "validateCookie: failed to talk to accounts")
 			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
 			return
 		}
 		defer aresp.Body.Close()
 		if aresp.StatusCode != http.StatusOK {
 			b, _ := ioutil.ReadAll(aresp.Body)
+			w.Header().Set("Access-Control-Allow-Origin", "*")
 			api.staticLogger.Tracef("validateCookie: failed to talk to accounts, status code %d, body %s", aresp.StatusCode, string(b))
 			api2.WriteError(w, api2.Error{"Unauthorized"}, http.StatusUnauthorized)
 			return
