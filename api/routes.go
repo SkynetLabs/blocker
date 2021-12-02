@@ -31,7 +31,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 		cookie, err := req.Cookie("skynet-jwt")
 		if err != nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.*")
+			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
@@ -45,7 +45,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 		aresp, err := http.DefaultClient.Do(areq)
 		if err != nil {
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.*")
+			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
@@ -57,7 +57,7 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 		if aresp.StatusCode != http.StatusOK {
 			b, _ := ioutil.ReadAll(aresp.Body)
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
-			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.*")
+			w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.dev")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 
