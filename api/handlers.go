@@ -50,6 +50,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		Tags:           body.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
+	skylink.Reporter.Sub = r.Form.Get("sub")
 	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {

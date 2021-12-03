@@ -1,10 +1,13 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	url "net/url"
 
+	"github.com/SkynetLabs/skynet-accounts/database"
 	"github.com/julienschmidt/httprouter"
 	"gitlab.com/NebulousLabs/errors"
 	api2 "gitlab.com/SkynetLabs/skyd/node/api"
@@ -45,8 +48,8 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
 			return
 		}
-		url := fmt.Sprintf("http://%s:%s/user", AccountsHost, AccountsPort)
-		areq, err := http.NewRequest(http.MethodGet, url, nil)
+		accountsURL := fmt.Sprintf("http://%s:%s/user", AccountsHost, AccountsPort)
+		areq, err := http.NewRequest(http.MethodGet, accountsURL, nil)
 		areq.AddCookie(cookie)
 		aresp, err := http.DefaultClient.Do(areq)
 		if err != nil {
@@ -57,11 +60,21 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 		defer aresp.Body.Close()
 		if aresp.StatusCode != http.StatusOK {
 			b, _ := ioutil.ReadAll(aresp.Body)
-
 			api.staticLogger.Tracef("validateCookie: failed to talk to accounts, status code %d, body %s", aresp.StatusCode, string(b))
 			api2.WriteError(w, api2.Error{"Unauthorized"}, http.StatusUnauthorized)
 			return
 		}
+		var u database.User
+		err = json.NewDecoder(aresp.Body).Decode(&u)
+		if err != nil {
+			api.staticLogger.Warnf("validateCookie: failed to parse accounts' response body: %s", err.Error())
+			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
+			return
+		}
+		if req.Form == nil {
+			req.Form = url.Values{}
+		}
+		req.Form.Set("sub", u.Sub)
 
 		h(w, req, ps)
 	}
