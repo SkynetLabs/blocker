@@ -22,5 +22,6 @@ type BlockedSkylink struct {
 type Reporter struct {
 	Name         string `bson:"name" json:"name"`
 	Email        string `bson:"email" json:"email"`
-	OtherContact string `bson:"other_contact" json:"otherContact"` // TODO Cap at 255 chars?
+	OtherContact string `bson:"other_contact" json:"otherContact"`
+	Sub          string `bson:"sub,omitempty" json:"sub,omitempty"`
 }
