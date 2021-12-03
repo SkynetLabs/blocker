@@ -10,6 +10,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
+	"gitlab.com/SkynetLabs/skyd/skymodules"
 )
 
 type (
@@ -44,6 +45,16 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
 		return
 	}
+	// Normalise the skylink hash. We want to use the same hash encoding in the
+	// database, regardless of the encoding of the skylink when we receive it -
+	// base32 or base64.
+	var sl skymodules.Skylink
+	err = sl.LoadString(body.Skylink)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
+		return
+	}
+	body.Skylink = sl.String()
 	skylink := &database.BlockedSkylink{
 		Skylink:        body.Skylink,
 		Reporter:       body.Reporter,
