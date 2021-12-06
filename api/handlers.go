@@ -2,7 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"regexp"
 	"time"
@@ -77,15 +76,16 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	skyapi.WriteSuccess(w)
 }
 
-// extractSkylinkHash extracts the skylink hash from the given skylink that might
-// have protocol, path, etc. within it.
+// extractSkylinkHash extracts the skylink hash from the given skylink that
+// might have protocol, path, etc. within it.
 func extractSkylinkHash(skylink string) (string, error) {
 	extractSkylinkRE := regexp.MustCompile("^.*([a-z0-9]{55})|([a-zA-Z0-9-_]{46}).*$")
 	m := extractSkylinkRE.FindStringSubmatch(skylink)
-	if len(m) < 1 {
-		fmt.Println("no skylink found in: ", skylink, m)
+	if len(m) < 3 || (m[1] == "" && m[2] == "") {
 		return "", errors.New("no valid skylink found in string " + skylink)
 	}
-	fmt.Println("extracted", m, m[0])
-	return m[0], nil
+	if m[1] != "" {
+		return m[1], nil
+	}
+	return m[2], nil
 }
