@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"regexp"
 	"time"
@@ -84,5 +85,6 @@ func extractSkylinkHash(skylink string) (string, error) {
 	if len(m) < 2 {
 		return "", errors.New("no valid skylink found in string " + skylink)
 	}
+	fmt.Println("extracted", m[1])
 	return m[1], nil
 }
