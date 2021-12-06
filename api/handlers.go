@@ -86,6 +86,6 @@ func extractSkylinkHash(skylink string) (string, error) {
 		fmt.Println("no skylink found in: ", skylink, m)
 		return "", errors.New("no valid skylink found in string " + skylink)
 	}
-	fmt.Println("extracted", m[1])
+	fmt.Println("extracted", m, m[1])
 	return m[1], nil
 }
