@@ -82,10 +82,10 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 func extractSkylinkHash(skylink string) (string, error) {
 	extractSkylinkRE := regexp.MustCompile("^.*([a-z0-9]{55})|([a-zA-Z0-9-_]{46}).*$")
 	m := extractSkylinkRE.FindStringSubmatch(skylink)
-	if len(m) < 2 {
+	if len(m) < 1 {
 		fmt.Println("no skylink found in: ", skylink, m)
 		return "", errors.New("no valid skylink found in string " + skylink)
 	}
-	fmt.Println("extracted", m, m[1])
-	return m[1], nil
+	fmt.Println("extracted", m, m[0])
+	return m[0], nil
 }
