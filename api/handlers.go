@@ -83,6 +83,7 @@ func extractSkylinkHash(skylink string) (string, error) {
 	extractSkylinkRE := regexp.MustCompile("^.*([a-z0-9]{55})|([a-zA-Z0-9-_]{46}).*$")
 	m := extractSkylinkRE.FindStringSubmatch(skylink)
 	if len(m) < 2 {
+		fmt.Println("no skylink found in: ", skylink, m)
 		return "", errors.New("no valid skylink found in string " + skylink)
 	}
 	fmt.Println("extracted", m[1])
