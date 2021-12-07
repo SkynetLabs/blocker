@@ -24,8 +24,8 @@ var (
 // buildHTTPRoutes registers all HTTP routes and their handlers.
 func (api *API) buildHTTPRoutes() {
 	api.staticRouter.GET("/health", api.healthGET)
-	api.staticRouter.GET("/skylinks", api.validateAuth(api.skylinksGET))
-	api.staticRouter.POST("/block", api.addCORSHeader(api.validateAuth(api.blockPOST)))
+	api.staticRouter.GET("/skylinks", api.validateAuth(api.skylinksGET, false))
+	api.staticRouter.POST("/block", api.addCORSHeader(api.validateAuth(api.blockPOST, true)))
 }
 
 // addCORSHeader sets the CORS headers.
@@ -47,7 +47,7 @@ func (api *API) addCORSHeader(h httprouter.Handle) httprouter.Handle {
 // In case of cookie auth it will  extract the cookie from the incoming blocking
 // request and uses it to get user info from accounts. This action utilises
 // accounts' infrastructure to validate the cookie.
-func (api *API) validateAuth(h httprouter.Handle) httprouter.Handle {
+func (api *API) validateAuth(h httprouter.Handle, allowCookie bool) httprouter.Handle {
 	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
 		// check basic auth
 		_, pass, ok := req.BasicAuth()
@@ -56,6 +56,11 @@ func (api *API) validateAuth(h httprouter.Handle) httprouter.Handle {
 			return
 		}
 
+		// check whether cookie auth is allowed
+		if !allowCookie {
+			api2.WriteError(w, api2.Error{"No basic auth found and cookie auth not allowed"}, http.StatusUnauthorized)
+			return
+		}
 		// check cookie auth
 		user, err := cookieAuth(req, api.staticLogger)
 		if err != nil {
