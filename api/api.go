@@ -21,13 +21,15 @@ var (
 
 // API is our central entry point to all subsystems relevant to serving requests.
 type API struct {
+	staticAPIPassword string
+
 	staticDB     *database.DB
 	staticRouter *httprouter.Router
 	staticLogger *logrus.Logger
 }
 
 // New creates a new API instance.
-func New(db *database.DB, logger *logrus.Logger) (*API, error) {
+func New(password string, db *database.DB, logger *logrus.Logger) (*API, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
@@ -38,6 +40,8 @@ func New(db *database.DB, logger *logrus.Logger) (*API, error) {
 	router.RedirectTrailingSlash = true
 
 	api := &API{
+		staticAPIPassword: password,
+
 		staticDB:     db,
 		staticRouter: router,
 		staticLogger: logger,

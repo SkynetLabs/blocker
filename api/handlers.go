@@ -3,7 +3,9 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	url "net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/SkynetLabs/blocker/database"
@@ -30,6 +32,45 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	err := api.staticDB.Ping(r.Context())
 	status.DBAlive = err == nil
 	skyapi.WriteJSON(w, status)
+}
+
+// skylinksGET returns the skylinks by tag
+func (api *API) skylinksGET(w http.ResponseWriter, req *http.Request, _ httprouter.Params) {
+	// parse the query params
+	queryForm, err := url.ParseQuery(req.URL.RawQuery)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// extract the tags list
+	tags := strings.FieldsFunc(queryForm.Get("tags"), func(c rune) bool {
+		return c == ','
+	})
+
+	// if no tags were given, error out
+	if len(tags) == 0 {
+		skyapi.WriteError(w, skyapi.Error{"missing parameter 'tags'"}, http.StatusBadRequest)
+		return
+	}
+
+	// TODO: validate tag list and inform
+
+	// fetch all skylinks by the given tags
+	blockedSkylinks, err := api.staticDB.FindByTags(tags)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	var skylinks []string
+	for _, blocked := range blockedSkylinks {
+		skylinks = append(skylinks, blocked.Skylink)
+	}
+
+	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "text/plain")
+	w.Write([]byte(strings.Join(skylinks, "\n")))
 }
 
 // blockPOST blocks a skylink

@@ -142,7 +142,7 @@ func main() {
 	blockerThread.Start()
 
 	// Initialise the server.
-	server, err := api.New(db, logger)
+	server, err := api.New(api.SkydAPIPassword, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}

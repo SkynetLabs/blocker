@@ -178,6 +178,22 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	return list, nil
 }
 
+func (db *DB) FindByTags(tags []string) ([]BlockedSkylink, error) {
+	coll := db.DB.Collection(dbSkylinks)
+
+	cursor, err := coll.Find(db.Ctx, bson.M{"tags": bson.M{"$in": tags}})
+	if err != nil {
+		return nil, errors.AddContext(err, "failed to fetch skylinks by tags")
+	}
+
+	skylinks := make([]BlockedSkylink, 0)
+	err = cursor.All(db.Ctx, &skylinks)
+	if err != nil {
+		return nil, err
+	}
+	return skylinks, nil
+}
+
 // LatestBlockTimestamp returns the timestamp (timestampAdded) of the latest
 // skylink that was blocked. When fetching new SkylinksToBlock we should start
 // from that timestamp (and one hour before that).
