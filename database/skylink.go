@@ -20,8 +20,9 @@ type BlockedSkylink struct {
 
 // Reporter is a person who reported that a given skylink should be blocked.
 type Reporter struct {
-	Name         string `bson:"name" json:"name"`
-	Email        string `bson:"email" json:"email"`
-	OtherContact string `bson:"other_contact" json:"otherContact"`
-	Sub          string `bson:"sub,omitempty" json:"sub,omitempty"`
+	Name            string `bson:"name" json:"name"`
+	Email           string `bson:"email" json:"email"`
+	OtherContact    string `bson:"other_contact" json:"otherContact"`
+	Sub             string `bson:"sub,omitempty" json:"sub,omitempty"`
+	Unauthenticated bool   `bson:"unauthenticated,omitempty" json:"unauthenticated,omitempty"`
 }
