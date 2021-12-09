@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"regexp"
 	"time"
 
@@ -61,7 +62,20 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		Tags:           body.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
-	skylink.Reporter.Sub = r.Form.Get("sub")
+	// Avoid nullpointer.
+	if r.Form == nil {
+		r.Form = url.Values{}
+	}
+	sub := r.Form.Get("sub")
+	if sub == "" {
+		// No sub. Maybe we didn't try to fetch it? Try now. Don't log errors.
+		u, err := UserFromReq(r, api.staticLogger)
+		if err == nil {
+			sub = u.Sub
+		}
+	}
+	skylink.Reporter.Sub = sub
+	skylink.Reporter.Unauthenticated = sub == ""
 	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {

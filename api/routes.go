@@ -9,6 +9,7 @@ import (
 
 	"github.com/SkynetLabs/skynet-accounts/database"
 	"github.com/julienschmidt/httprouter"
+	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	api2 "gitlab.com/SkynetLabs/skyd/node/api"
 )
@@ -42,32 +43,8 @@ func (api *API) addCORSHeader(h httprouter.Handle) httprouter.Handle {
 // infrastructure to validate the cookie.
 func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-		cookie, err := req.Cookie("skynet-jwt")
+		u, err := UserFromReq(req, api.staticLogger)
 		if err != nil {
-			err = errors.AddContext(err, "failed to read skynet cookie")
-			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
-			return
-		}
-		accountsURL := fmt.Sprintf("http://%s:%s/user", AccountsHost, AccountsPort)
-		areq, err := http.NewRequest(http.MethodGet, accountsURL, nil)
-		areq.AddCookie(cookie)
-		aresp, err := http.DefaultClient.Do(areq)
-		if err != nil {
-			err = errors.AddContext(err, "validateCookie: failed to talk to accounts")
-			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
-			return
-		}
-		defer aresp.Body.Close()
-		if aresp.StatusCode != http.StatusOK {
-			b, _ := ioutil.ReadAll(aresp.Body)
-			api.staticLogger.Tracef("validateCookie: failed to talk to accounts, status code %d, body %s", aresp.StatusCode, string(b))
-			api2.WriteError(w, api2.Error{"Unauthorized"}, http.StatusUnauthorized)
-			return
-		}
-		var u database.User
-		err = json.NewDecoder(aresp.Body).Decode(&u)
-		if err != nil {
-			api.staticLogger.Warnf("validateCookie: failed to parse accounts' response body: %s", err.Error())
 			api2.WriteError(w, api2.Error{err.Error()}, http.StatusUnauthorized)
 			return
 		}
@@ -78,4 +55,33 @@ func (api *API) validateCookie(h httprouter.Handle) httprouter.Handle {
 
 		h(w, req, ps)
 	}
+}
+
+// UserFromReq identifies the user making the request by reading the attached
+// skynet cookie and querying Accounts service for the user's info.
+func UserFromReq(req *http.Request, logger *logrus.Logger) (*database.User, error) {
+	cookie, err := req.Cookie("skynet-jwt")
+	if err != nil {
+		return nil, errors.AddContext(err, "failed to read skynet cookie")
+	}
+	accountsURL := fmt.Sprintf("http://%s:%s/user", AccountsHost, AccountsPort)
+	areq, err := http.NewRequest(http.MethodGet, accountsURL, nil)
+	areq.AddCookie(cookie)
+	aresp, err := http.DefaultClient.Do(areq)
+	if err != nil {
+		return nil, errors.AddContext(err, "validateCookie: failed to talk to accounts")
+	}
+	defer aresp.Body.Close()
+	if aresp.StatusCode != http.StatusOK {
+		b, _ := ioutil.ReadAll(aresp.Body)
+		logger.Tracef("validateCookie: failed to talk to accounts, status code %d, body %s", aresp.StatusCode, string(b))
+		return nil, errors.New("Unauthorized")
+	}
+	var u database.User
+	err = json.NewDecoder(aresp.Body).Decode(&u)
+	if err != nil {
+		logger.Warnf("validateCookie: failed to parse accounts' response body: %s", err.Error())
+		return nil, err
+	}
+	return &u, nil
 }
