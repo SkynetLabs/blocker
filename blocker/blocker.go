@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"net/http"
+	"os"
 	"sort"
 	"strings"
 	"time"
@@ -27,6 +28,11 @@ const (
 )
 
 var (
+	// NginxCachePurgerListPath is the path at which we can find the list where
+	// we want to add the skylinks which we want purged from nginx's cache.
+	// This value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
+	// environment variable.
+	NginxCachePurgerListPath = "/data/nginx/blocker/list"
 	// skydTimeout is the timeout of the http calls to skyd in seconds
 	skydTimeout = "30"
 	// sleepBetweenScans defines how long the scanner should sleep after
@@ -35,7 +41,7 @@ var (
 		build.Var{
 			Dev:      10 * time.Second,
 			Testing:  100 * time.Millisecond,
-			Standard: time.Minute,
+			Standard: 30 * time.Minute,
 		},
 	).(time.Duration)
 	// sleepOnErrStep defines the base step for sleeping after encountering an
@@ -199,6 +205,10 @@ func (bl Blocker) Start() {
 // blockSkylinks calls skyd and instructs it to block the given list of
 // skylinks.
 func (bl *Blocker) blockSkylinks(sls []string) error {
+	err := bl.writeToNginxCachePurger(sls)
+	if err != nil {
+		bl.staticLogger.Warnf("Failed to write to nginx cache purger's list: %s", err)
+	}
 	// Build the call to skyd.
 	reqBody := skyapi.SkynetBlocklistPOST{
 		Add:    sls,
@@ -227,12 +237,36 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
 		respBody, err := ioutil.ReadAll(resp.Body)
 		if err != nil {
-			bl.staticLogger.Warnf(errors.AddContext(err, "failed to parse response body after a failed call to skyd").Error())
+			bl.staticLogger.Warn(errors.AddContext(err, "failed to parse response body after a failed call to skyd").Error())
 			respBody = []byte{}
 		}
 		err = errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
-		bl.staticLogger.Warnf(err.Error())
+		bl.staticLogger.Warn(err.Error())
 		return err
+	}
+	return nil
+}
+
+// writeToNginxCachePurger appends all given skylinks to the file at path
+// NginxCachePurgerListPath from where another process will purge them from
+// nginx's cache.
+func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
+	f, err := os.OpenFile(NginxCachePurgerListPath, os.O_APPEND&os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		e1 := f.Sync()
+		e2 := f.Close()
+		if e1 != nil || e2 != nil {
+			bl.staticLogger.Warnf("Failed to sync and close nginx cache purger list: %s", errors.Compose(e1, e2).Error())
+		}
+	}()
+	for _, s := range sls {
+		_, err = f.WriteString(s + "\n")
+		if err != nil {
+			return err
+		}
 	}
 	return nil
 }
