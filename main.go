@@ -135,6 +135,12 @@ func main() {
 	}
 
 	// Initialise and start the background scanner task.
+	if nginxList := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LIST"); nginxList != "" {
+		blocker.NginxCachePurgerListPath = nginxList
+	}
+	if nginxLock := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LOCK"); nginxLock != "" {
+		blocker.NginxCachePurgeLockPath = nginxLock
+	}
 	blockerThread, err := blocker.New(ctx, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
