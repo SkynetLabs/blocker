@@ -30,14 +30,20 @@ const (
 var (
 	// NginxCachePurgerListPath is the path at which we can find the list where
 	// we want to add the skylinks which we want purged from nginx's cache.
-	// This value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
-	// environment variable.
+	//
+	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
+	// environment variable, however it is important that this path matches the
+	// path in the nginx purge script that is part of the cron.
 	NginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
 
 	// NginxCachePurgeLockPath is the path to the lock directory. The blocker
-	// writes to the list file while holding the lock to ensure the file isn't
-	// altered by the cron job that purges the nginx cache. // This value can be
-	// configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK environment variable.
+	// acquires this lock before writing to the list file, essentially ensuring
+	// the purge script does not alter the file while the blocker API is writing
+	// to it.
+	//
+	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK
+	// environment variable, however it is important that this path matches the
+	// path in the nginx purge script that is part of the cron.
 	NginxCachePurgeLockPath = "/data/nginx/blocker/lock"
 
 	// skydTimeout is the timeout of the http calls to skyd in seconds
@@ -48,7 +54,7 @@ var (
 		build.Var{
 			Dev:      10 * time.Second,
 			Testing:  100 * time.Millisecond,
-			Standard: 30 * time.Minute,
+			Standard: time.Minute,
 		},
 	).(time.Duration)
 	// sleepOnErrStep defines the base step for sleeping after encountering an
