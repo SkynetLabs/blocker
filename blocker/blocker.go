@@ -295,7 +295,7 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 	}()
 
 	// open the nginx cache list file
-	f, err := os.OpenFile(NginxCachePurgerListPath, os.O_APPEND&os.O_CREATE, 0644)
+	f, err := os.OpenFile(NginxCachePurgerListPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
