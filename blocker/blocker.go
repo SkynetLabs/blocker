@@ -32,7 +32,14 @@ var (
 	// we want to add the skylinks which we want purged from nginx's cache.
 	// This value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
 	// environment variable.
-	NginxCachePurgerListPath = "/data/nginx/blocker/list"
+	NginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
+
+	// NginxCachePurgeLockPath is the path to the lock directory. The blocker
+	// writes to the list file while holding the lock to ensure the file isn't
+	// altered by the cron job that purges the nginx cache. // This value can be
+	// configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK environment variable.
+	NginxCachePurgeLockPath = "/data/nginx/blocker/lock"
+
 	// skydTimeout is the timeout of the http calls to skyd in seconds
 	skydTimeout = "30"
 	// sleepBetweenScans defines how long the scanner should sleep after
@@ -251,6 +258,37 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 // NginxCachePurgerListPath from where another process will purge them from
 // nginx's cache.
 func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
+	// acquire a lock on the nginx cache list
+	//
+	// NOTE: we use a directory as lock file because this allows for an atomic
+	// mkdir operation in the bash script that purges the skylinks in the list
+	err := func() error {
+		var lockErr error
+		// we only attempt this 3 times with a 1s sleep in between, this should
+		// not fail seeing as Nginx only moves the file
+		for i := 0; i < 3; i++ {
+			lockErr = os.Mkdir(NginxCachePurgeLockPath, 0700)
+			if lockErr == nil {
+				break
+			}
+			bl.staticLogger.Warnf("failed to acquire nginx lock")
+			time.Sleep(time.Second)
+		}
+		return lockErr
+	}()
+	if err != nil {
+		return errors.AddContext(err, "failed to acquire nginx lock")
+	}
+
+	// defer a function that releases the lock
+	defer func() {
+		err := os.Remove(NginxCachePurgeLockPath)
+		if err != nil {
+			bl.staticLogger.Errorf("failed to release nginx lock, err %v", err)
+		}
+	}()
+
+	// open the nginx cache list file
 	f, err := os.OpenFile(NginxCachePurgerListPath, os.O_APPEND&os.O_CREATE, 0644)
 	if err != nil {
 		return err

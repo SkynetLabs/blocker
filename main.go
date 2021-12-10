@@ -135,8 +135,11 @@ func main() {
 	}
 
 	// Initialise and start the background scanner task.
-	if p := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LIST"); p != "" {
-		blocker.NginxCachePurgerListPath = p
+	if nginxList := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LIST"); nginxList != "" {
+		blocker.NginxCachePurgerListPath = nginxList
+	}
+	if nginxLock := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LOCK"); nginxLock != "" {
+		blocker.NginxCachePurgeLockPath = nginxLock
 	}
 	blockerThread, err := blocker.New(ctx, db, logger)
 	if err != nil {
