@@ -24,7 +24,7 @@ type (
 
 	// statusResponse is what we return on block requests
 	statusResponse struct {
-		Status string
+		Status string `json:"status"`
 	}
 )
 
