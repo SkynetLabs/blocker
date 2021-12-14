@@ -21,6 +21,11 @@ type (
 		Reporter database.Reporter `json:"reporter"`
 		Tags     []string          `json:"tags"`
 	}
+
+	// statusResponse is what we return on block requests
+	statusResponse struct {
+		Status string
+	}
 )
 
 // healthGET returns the status of the service
@@ -79,7 +84,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {
-		skyapi.WriteJSON(w, "BlockedSkylink already exists in the database")
+		skyapi.WriteJSON(w, statusResponse{"duplicate"})
 		return
 	}
 	if err != nil {
@@ -87,7 +92,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		return
 	}
 	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
-	skyapi.WriteSuccess(w)
+	skyapi.WriteJSON(w, statusResponse{"queued"})
 }
 
 // extractSkylinkHash extracts the skylink hash from the given skylink that
