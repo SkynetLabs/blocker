@@ -92,7 +92,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		return
 	}
 	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
-	skyapi.WriteJSON(w, statusResponse{"queued"})
+	skyapi.WriteJSON(w, statusResponse{"blocked"})
 }
 
 // extractSkylinkHash extracts the skylink hash from the given skylink that
