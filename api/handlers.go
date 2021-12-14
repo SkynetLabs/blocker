@@ -81,7 +81,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	}
 	skylink.Reporter.Sub = sub
 	skylink.Reporter.Unauthenticated = sub == ""
-	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink)
+	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
 	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
 	if errors.Contains(err, database.ErrSkylinkExists) {
 		skyapi.WriteJSON(w, statusResponse{"duplicate"})
