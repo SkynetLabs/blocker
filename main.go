@@ -2,10 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -37,36 +34,6 @@ func loadDBCredentials() (accdb.DBCredentials, error) {
 		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_PORT")
 	}
 	return cds, nil
-}
-
-// isSkydUp connects to the local skyd and checks its status.
-// Returns true only if skyd is fully ready.
-func isSkydUp(logger *logrus.Logger) bool {
-	status := struct {
-		Ready     bool
-		Consensus bool
-		Gateway   bool
-		Renter    bool
-	}{}
-	url := fmt.Sprintf("http://%s:%d/daemon/ready", api.SkydHost, api.SkydPort)
-	r, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		logger.Fatal(err)
-		return false
-	}
-	r.Header.Set("User-Agent", "Sia-Agent")
-	resp, err := http.DefaultClient.Do(r)
-	if err != nil {
-		logger.Warnf("Failed to query skyd: %s", err.Error())
-		return false
-	}
-	defer resp.Body.Close()
-	err = json.NewDecoder(resp.Body).Decode(&status)
-	if err != nil {
-		logger.Warnf("Bad body from skyd's /daemon/ready: %s", err.Error())
-		return false
-	}
-	return status.Ready && status.Consensus && status.Gateway && status.Renter
 }
 
 func main() {
@@ -109,20 +76,18 @@ func main() {
 		log.Fatal(errors.AddContext(err, "failed to connect to the db"))
 	}
 
-	// Connect to skyd.
-	skydPort, err := strconv.Atoi(os.Getenv("API_PORT"))
-	if err == nil && skydPort > 0 {
-		api.SkydPort = skydPort
+	// Blocker env vars.
+	var skydPort int
+	skydPortEnv, err := strconv.Atoi(os.Getenv("API_PORT"))
+	if err == nil && skydPortEnv > 0 {
+		skydPort = skydPortEnv
 	}
-	if skydHost := os.Getenv("API_HOST"); skydHost != "" {
-		api.SkydHost = skydHost
+	var skydHost string
+	if skydHostEnv := os.Getenv("API_HOST"); skydHostEnv != "" {
+		skydHost = skydHostEnv
 	}
-	if !isSkydUp(logger) {
-		log.Fatal(errors.New("skyd down, exiting"))
-	}
-
-	api.SkydAPIPassword = os.Getenv("SIA_API_PASSWORD")
-	if api.SkydAPIPassword == "" {
+	skydAPIPassword := os.Getenv("SIA_API_PASSWORD")
+	if skydAPIPassword == "" {
 		log.Fatal(errors.New("SIA_API_PASSWORD is empty, exiting"))
 	}
 
@@ -141,10 +106,17 @@ func main() {
 	if nginxLock := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LOCK"); nginxLock != "" {
 		blocker.NginxCachePurgeLockPath = nginxLock
 	}
-	blockerThread, err := blocker.New(ctx, db, logger)
+
+	// Create the blocker.
+	blockerThread, err := blocker.New(ctx, db, logger, skydHost, skydAPIPassword, skydPort)
+	if errors.Contains(err, blocker.ErrSkydOffline) {
+		log.Fatal(errors.New("skyd down, exiting"))
+	}
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
+
+	// Start blocker.
 	blockerThread.Start()
 
 	// Initialise the server.

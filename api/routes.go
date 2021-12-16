@@ -24,7 +24,8 @@ var (
 // buildHTTPRoutes registers all HTTP routes and their handlers.
 func (api *API) buildHTTPRoutes() {
 	api.staticRouter.GET("/health", api.healthGET)
-	api.staticRouter.POST("/block", api.addCORSHeader(api.blockPOST))
+	api.staticRouter.POST("/block", api.blockPOST)
+	api.staticRouter.POST("/powblock", api.addCORSHeader(api.blockWithPoWPOST))
 }
 
 // addCORSHeader sets the CORS headers.

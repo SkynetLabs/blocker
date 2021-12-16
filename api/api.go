@@ -10,15 +10,6 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 )
 
-var (
-	// SkydHost is where we connect to skyd
-	SkydHost = "sia"
-	// SkydPort is where we connect to skyd
-	SkydPort = 9980
-	// SkydAPIPassword is the API password for skyd
-	SkydAPIPassword string
-)
-
 // API is our central entry point to all subsystems relevant to serving requests.
 type API struct {
 	staticDB     *database.DB

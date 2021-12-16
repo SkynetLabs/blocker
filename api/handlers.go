@@ -1,12 +1,14 @@
 package api
 
 import (
+	"context"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"regexp"
 	"time"
 
+	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/julienschmidt/httprouter"
 	"gitlab.com/NebulousLabs/errors"
@@ -15,18 +17,52 @@ import (
 )
 
 type (
-	// BlockPOST ...
+	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
-		Skylink  string            `json:"skylink"`
+		Skylink  skylink           `json:"skylink"`
 		Reporter database.Reporter `json:"reporter"`
 		Tags     []string          `json:"tags"`
+	}
+
+	// BlockPOST describes a request to the /block endpoint.
+	BlockWithPoWPOST struct {
+		Skylink skylink          `json:"skylink"`
+		PoW     blocker.BlockPoW `json:"pow"`
+		Tags    []string         `json:"tags"`
 	}
 
 	// statusResponse is what we return on block requests
 	statusResponse struct {
 		Status string `json:"status"`
 	}
+
+	// skylink is a helper type which adds custom decoding for skylinks.
+	skylink string
 )
+
+// UnmarshalJSON implements json.Unmarshaler for a skylink.
+func (sl skylink) UnmarshalJSON(b []byte) error {
+	var link string
+	err := json.Unmarshal(b, &link)
+	if err != nil {
+		return err
+	}
+	// Trim all the redundant information.
+	link, err = extractSkylinkHash(link)
+	if err != nil {
+		return err
+	}
+	// Normalise the skylink hash. We want to use the same hash encoding in the
+	// database, regardless of the encoding of the skylink when we receive it -
+	// base32 or base64.
+	var slNormalized skymodules.Skylink
+	err = slNormalized.LoadString(link)
+	if err != nil {
+		return errors.AddContext(err, "invalid skylink provided")
+	}
+	sl = skylink(slNormalized.String())
+	return nil
+}
 
 // healthGET returns the status of the service
 func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -38,38 +74,53 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	skyapi.WriteJSON(w, status)
 }
 
-// blockPOST blocks a skylink
+// blockWithPoWPOST blocks a skylink. It is meant to be used by untrusted sources such as
+// the abuse report skapp. The PoW prevents users from easily and anonymously
+// blocking large numbers of skylinks. Instead it encourages reuse of proofs
+// which improves the linkability between reports, thus allowing us to more
+// easily unblock a batch of links.
+func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	// Protect against large bodies.
+	b := http.MaxBytesReader(w, r.Body, 1<<16) // 64 kib
+	defer b.Close()
+
+	// Parse the request.
+	var body BlockWithPoWPOST
+	err := json.NewDecoder(b).Decode(&body)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// Verify the pow.
+	err = body.PoW.Verify()
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// When blocking, use the MySkyID as the reporter.
+	err = api.block(r.Context(), BlockPOST{
+		Skylink: body.Skylink,
+		Reporter: database.Reporter{
+			OtherContact: hex.EncodeToString(body.PoW.MySkyID[:]),
+		},
+		Tags: body.Tags,
+	}, "")
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+	}
+	skyapi.WriteSuccess(w)
+}
+
+// blockPOST blocks a skylink. It is meant to be used by trusted sources such as
+// the malware scanner or abuse email scanner.
 func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var body BlockPOST
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
 		return
-	}
-	body.Skylink, err = extractSkylinkHash(body.Skylink)
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
-		return
-	}
-	// Normalise the skylink hash. We want to use the same hash encoding in the
-	// database, regardless of the encoding of the skylink when we receive it -
-	// base32 or base64.
-	var sl skymodules.Skylink
-	err = sl.LoadString(body.Skylink)
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
-		return
-	}
-	body.Skylink = sl.String()
-	skylink := &database.BlockedSkylink{
-		Skylink:        body.Skylink,
-		Reporter:       body.Reporter,
-		Tags:           body.Tags,
-		TimestampAdded: time.Now().UTC(),
-	}
-	// Avoid nullpointer.
-	if r.Form == nil {
-		r.Form = url.Values{}
 	}
 	sub := r.Form.Get("sub")
 	if sub == "" {
@@ -79,10 +130,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 			sub = u.Sub
 		}
 	}
-	skylink.Reporter.Sub = sub
-	skylink.Reporter.Unauthenticated = sub == ""
-	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
-	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
+	err = api.block(r.Context(), body, sub)
 	if errors.Contains(err, database.ErrSkylinkExists) {
 		skyapi.WriteJSON(w, statusResponse{"duplicate"})
 		return
@@ -91,8 +139,29 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 		return
 	}
-	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
 	skyapi.WriteJSON(w, statusResponse{"blocked"})
+}
+
+// block blocks a skylink
+func (api *API) block(ctx context.Context, bp BlockPOST, sub string) error {
+	skylink := &database.BlockedSkylink{
+		Skylink:        string(bp.Skylink),
+		Reporter:       bp.Reporter,
+		Tags:           bp.Tags,
+		TimestampAdded: time.Now().UTC(),
+	}
+	skylink.Reporter.Sub = sub
+	skylink.Reporter.Unauthenticated = sub == ""
+	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
+	err := api.staticDB.BlockedSkylinkCreate(ctx, skylink)
+	if errors.Contains(err, database.ErrSkylinkExists) {
+		return err
+	}
+	if err != nil {
+		return err
+	}
+	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
+	return nil
 }
 
 // extractSkylinkHash extracts the skylink hash from the given skylink that
