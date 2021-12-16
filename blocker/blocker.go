@@ -21,32 +21,14 @@ import (
 )
 
 const (
-	// SkylinksChunk is the max number of skylinks to be sent for blocking
+	// skylinksChunk is the max number of skylinks to be sent for blocking
 	// simultaneously.
-	SkylinksChunk = 100
+	skylinksChunk = 100
 )
 
 var (
 	// ErrSkydOffline is returned if skyd is unreachable on startup.
 	ErrSkydOffline = errors.New("skyd is offline")
-
-	// NginxCachePurgerListPath is the path at which we can find the list where
-	// we want to add the skylinks which we want purged from nginx's cache.
-	//
-	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
-	// environment variable, however it is important that this path matches the
-	// path in the nginx purge script that is part of the cron.
-	NginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
-
-	// NginxCachePurgeLockPath is the path to the lock directory. The blocker
-	// acquires this lock before writing to the list file, essentially ensuring
-	// the purge script does not alter the file while the blocker API is writing
-	// to it.
-	//
-	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK
-	// environment variable, however it is important that this path matches the
-	// path in the nginx purge script that is part of the cron.
-	NginxCachePurgeLockPath = "/data/nginx/blocker/lock"
 
 	// skydTimeout is the timeout of the http calls to skyd in seconds
 	skydTimeout = "30"
@@ -75,14 +57,12 @@ var (
 // Blocker scans the database for skylinks that should be blocked and calls
 // skyd to block them.
 type Blocker struct {
-	// staticSkydHost is where we connect to skyd
-	staticSkydHost string
-
-	// staticSkydPort is where we connect to skyd
-	staticSkydPort int
-
-	// staticSkydAPIPassword is the API password for skyd
+	staticSkydHost        string
+	staticSkydPort        int
 	staticSkydAPIPassword string
+
+	staticNginxCachePurgerListPath string
+	staticNginxCachePurgeLockPath  string
 
 	staticCtx    context.Context
 	staticDB     *database.DB
@@ -90,7 +70,7 @@ type Blocker struct {
 }
 
 // New returns a new Blocker with the given parameters.
-func New(ctx context.Context, db *database.DB, logger *logrus.Logger, skydHost, skydPassword string, skydPort int) (*Blocker, error) {
+func New(ctx context.Context, db *database.DB, logger *logrus.Logger, skydHost, skydPassword string, skydPort int, nginxCachePurgerListPath, nginxCachePurgeLockPath string) (*Blocker, error) {
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
 	}
@@ -104,6 +84,9 @@ func New(ctx context.Context, db *database.DB, logger *logrus.Logger, skydHost, 
 		staticSkydHost:        skydHost,
 		staticSkydPort:        skydPort,
 		staticSkydAPIPassword: skydPassword,
+
+		staticNginxCachePurgerListPath: nginxCachePurgerListPath,
+		staticNginxCachePurgeLockPath:  nginxCachePurgeLockPath,
 
 		staticCtx:    ctx,
 		staticDB:     db,
@@ -166,8 +149,8 @@ func (bl *Blocker) SweepAndBlock() error {
 	})
 
 	// Break the list into chunks of size SkylinksChunk and block them.
-	for idx := 0; idx < len(skylinksToBlock); idx += SkylinksChunk {
-		end := idx + SkylinksChunk
+	for idx := 0; idx < len(skylinksToBlock); idx += skylinksChunk {
+		end := idx + skylinksChunk
 		if end > len(skylinksToBlock) {
 			end = len(skylinksToBlock)
 		}
@@ -322,7 +305,7 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 		// we only attempt this 3 times with a 1s sleep in between, this should
 		// not fail seeing as Nginx only moves the file
 		for i := 0; i < 3; i++ {
-			lockErr = os.Mkdir(NginxCachePurgeLockPath, 0700)
+			lockErr = os.Mkdir(bl.staticNginxCachePurgeLockPath, 0700)
 			if lockErr == nil {
 				break
 			}
@@ -337,14 +320,14 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 
 	// defer a function that releases the lock
 	defer func() {
-		err := os.Remove(NginxCachePurgeLockPath)
+		err := os.Remove(bl.staticNginxCachePurgeLockPath)
 		if err != nil {
 			bl.staticLogger.Errorf("failed to release nginx lock, err %v", err)
 		}
 	}()
 
 	// open the nginx cache list file
-	f, err := os.OpenFile(NginxCachePurgerListPath, os.O_RDWR|os.O_CREATE, 0644)
+	f, err := os.OpenFile(bl.staticNginxCachePurgerListPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}

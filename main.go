@@ -16,6 +16,34 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 )
 
+const (
+	// defaultSkydHost is where we connect to skyd unless overwritten by
+	// "API_HOST" environment variables.
+	defaultSkydHost = "sia"
+
+	// defaultSkydPort is where we connect to skyd unless overwritten by
+	// "API_PORT" environment variables.
+	defaultSkydPort = 9980
+
+	// defaultNginxCachePurgerListPath is the path at which we can find the list where
+	// we want to add the skylinks which we want purged from nginx's cache.
+	//
+	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
+	// environment variable, however it is important that this path matches the
+	// path in the nginx purge script that is part of the cron.
+	defaultNginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
+
+	// defaultNginxCachePurgeLockPath is the path to the lock directory. The blocker
+	// acquires this lock before writing to the list file, essentially ensuring
+	// the purge script does not alter the file while the blocker API is writing
+	// to it.
+	//
+	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK
+	// environment variable, however it is important that this path matches the
+	// path in the nginx purge script that is part of the cron.
+	defaultNginxCachePurgeLockPath = "/data/nginx/blocker/lock"
+)
+
 // loadDBCredentials creates a new db connection based on credentials found in
 // the environment variables.
 func loadDBCredentials() (accdb.DBCredentials, error) {
@@ -77,12 +105,12 @@ func main() {
 	}
 
 	// Blocker env vars.
-	var skydPort int
+	skydPort := defaultSkydPort
 	skydPortEnv, err := strconv.Atoi(os.Getenv("API_PORT"))
 	if err == nil && skydPortEnv > 0 {
 		skydPort = skydPortEnv
 	}
-	var skydHost string
+	skydHost := defaultSkydHost
 	if skydHostEnv := os.Getenv("API_HOST"); skydHostEnv != "" {
 		skydHost = skydHostEnv
 	}
@@ -100,15 +128,17 @@ func main() {
 	}
 
 	// Initialise and start the background scanner task.
+	nginxCachePurgerListPath := defaultNginxCachePurgerListPath
 	if nginxList := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LIST"); nginxList != "" {
-		blocker.NginxCachePurgerListPath = nginxList
+		nginxCachePurgerListPath = nginxList
 	}
+	nginxCachePurgeLockPath := defaultNginxCachePurgeLockPath
 	if nginxLock := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LOCK"); nginxLock != "" {
-		blocker.NginxCachePurgeLockPath = nginxLock
+		nginxCachePurgeLockPath = nginxLock
 	}
 
 	// Create the blocker.
-	blockerThread, err := blocker.New(ctx, db, logger, skydHost, skydAPIPassword, skydPort)
+	blockerThread, err := blocker.New(ctx, db, logger, skydHost, skydAPIPassword, skydPort, nginxCachePurgerListPath, nginxCachePurgeLockPath)
 	if errors.Contains(err, blocker.ErrSkydOffline) {
 		log.Fatal(errors.New("skyd down, exiting"))
 	}
