@@ -11,6 +11,7 @@ import (
 	"github.com/mimoo/GoKangarooTwelve/K12"
 	"gitlab.com/NebulousLabs/errors"
 	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/sha3"
 )
 
 // mySkyTarget is the target a proof needs to meet to be considered valid.
@@ -51,7 +52,12 @@ var (
 	// match its byte representation.
 	errInvalidSignature = errors.New("invalid signature")
 
+	// proofHashIdentifier is the salt for the K12 hashing algorithm.
 	proofHashIdentifier = []byte("MySkyProof")
+
+	// myskySignSalt is the salt for the hash of the proof which is then
+	// signed.
+	myskySignSalt = []byte("MYSKY_ID_VERIFICATION")
 )
 
 type (
@@ -215,9 +221,12 @@ func (p BlockPoW) verify(target [proofHashSize]byte) error {
 	// Get the proof bytes.
 	b := p.ProofBytes()
 
+	// Salt them.
+	msg := sha3.Sum512(append(myskySignSalt, b...))
+
 	// Verify Signature.
 	pk := p.PublicKey()
-	if !ed25519.Verify(pk, b, p.Signature) {
+	if !ed25519.Verify(pk, msg[:], p.Signature) {
 		return errInvalidSignature
 	}
 
