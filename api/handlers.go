@@ -19,16 +19,23 @@ import (
 type (
 	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
-		Skylink  skylink           `json:"skylink"`
-		Reporter database.Reporter `json:"reporter"`
-		Tags     []string          `json:"tags"`
+		Skylink  skylink  `json:"skylink"`
+		Reporter Reporter `json:"reporter"`
+		Tags     []string `json:"tags"`
 	}
 
 	// BlockPOST describes a request to the /block endpoint.
 	BlockWithPoWPOST struct {
-		Skylink skylink          `json:"skylink"`
-		PoW     blocker.BlockPoW `json:"pow"`
-		Tags    []string         `json:"tags"`
+		BlockPOST
+		PoW blocker.BlockPoW `json:"pow"`
+	}
+
+	// Reporter is a person who reported that a given skylink should be
+	// blocked.
+	Reporter struct {
+		Name         string `json:"name"`
+		Email        string `json:"email"`
+		OtherContact string `json:"othercontact"`
 	}
 
 	// statusResponse is what we return on block requests
@@ -99,14 +106,12 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 		return
 	}
 
-	// When blocking, use the MySkyID as the reporter.
-	err = api.block(r.Context(), BlockPOST{
-		Skylink: body.Skylink,
-		Reporter: database.Reporter{
-			OtherContact: hex.EncodeToString(body.PoW.MySkyID[:]),
-		},
-		Tags: body.Tags,
-	}, "")
+	// Use the MySkyID as the suband make sure we don't consider the
+	// reporter authenticated.
+	sub := hex.EncodeToString(body.PoW.MySkyID[:])
+
+	// Block the link.
+	err = api.block(r.Context(), body.BlockPOST, sub, true)
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 	}
@@ -130,7 +135,9 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 			sub = u.Sub
 		}
 	}
-	err = api.block(r.Context(), body, sub)
+
+	// Block the link.
+	err = api.block(r.Context(), body, sub, sub == "")
 	if errors.Contains(err, database.ErrSkylinkExists) {
 		skyapi.WriteJSON(w, statusResponse{"duplicate"})
 		return
@@ -143,20 +150,21 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 }
 
 // block blocks a skylink
-func (api *API) block(ctx context.Context, bp BlockPOST, sub string) error {
+func (api *API) block(ctx context.Context, bp BlockPOST, sub string, unauthenticated bool) error {
 	skylink := &database.BlockedSkylink{
-		Skylink:        string(bp.Skylink),
-		Reporter:       bp.Reporter,
+		Skylink: string(bp.Skylink),
+		Reporter: database.Reporter{
+			Name:            bp.Reporter.Name,
+			Email:           bp.Reporter.Email,
+			OtherContact:    bp.Reporter.OtherContact,
+			Sub:             sub,
+			Unauthenticated: unauthenticated,
+		},
 		Tags:           bp.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
-	skylink.Reporter.Sub = sub
-	skylink.Reporter.Unauthenticated = sub == ""
 	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
 	err := api.staticDB.BlockedSkylinkCreate(ctx, skylink)
-	if errors.Contains(err, database.ErrSkylinkExists) {
-		return err
-	}
 	if err != nil {
 		return err
 	}
