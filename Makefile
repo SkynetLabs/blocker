@@ -31,7 +31,6 @@ vet:
 # markdown-spellcheck runs codespell on all markdown files that are not
 # vendored.
 markdown-spellcheck:
-	pip install codespell 1>/dev/null 2>&1
 	git ls-files "*.md" :\!:"vendor/**" | xargs codespell --check-filenames
 
 # lint runs golangci-lint (which includes golint, a spellcheck of the codebase,
@@ -72,7 +71,6 @@ endef
 start-mongo:
 	-docker stop blocker-mongo-test-db 1>/dev/null 2>&1
 	-docker rm blocker-mongo-test-db 1>/dev/null 2>&1
-	chmod 400 $(shell pwd)/test/fixtures/mongo_keyfile
 	docker run \
      --rm \
      --detach \
@@ -80,8 +78,7 @@ start-mongo:
      -p $(MONGO_PORT):$(MONGO_PORT) \
      -e MONGO_INITDB_ROOT_USERNAME=$(MONGO_USER) \
      -e MONGO_INITDB_ROOT_PASSWORD=$(MONGO_PASSWORD) \
-     -v $(shell pwd)/test/fixtures/mongo_keyfile:/data/mgkey \
-	mongo:4.4.1 mongod --port=$(MONGO_PORT) --replSet=skynet --keyFile=/data/mgkey 1>/dev/null 2>&1
+	mongo:4.4.1 mongod --port=$(MONGO_PORT) --replSet=skynet 1>/dev/null 2>&1
 	# wait for mongo to start before we try to configure it
 	status=1 ; while [[ $$status -gt 0 ]]; do \
 		sleep 1 ; \

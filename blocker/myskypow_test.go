@@ -252,7 +252,6 @@ func testMySkyProofVerify(t *testing.T) {
 	if err := invalidProof.verify(minTarget); !errors.Contains(err, errInvalidSignature) {
 		t.Fatal(err)
 	}
-
 }
 
 // TestFindTarget is a test that can be run to identify a good target on a given

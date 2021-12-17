@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"strconv"
@@ -10,10 +11,10 @@ import (
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
-	accdb "github.com/SkynetLabs/skynet-accounts/database"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 const (
@@ -46,22 +47,23 @@ const (
 
 // loadDBCredentials creates a new db connection based on credentials found in
 // the environment variables.
-func loadDBCredentials() (accdb.DBCredentials, error) {
-	var cds accdb.DBCredentials
+func loadDBCredentials() (string, options.Credential, error) {
+	var creds options.Credential
 	var ok bool
-	if cds.User, ok = os.LookupEnv("SKYNET_DB_USER"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_USER")
+	if creds.Username, ok = os.LookupEnv("SKYNET_DB_USER"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_USER")
 	}
-	if cds.Password, ok = os.LookupEnv("SKYNET_DB_PASS"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_PASS")
+	if creds.Password, ok = os.LookupEnv("SKYNET_DB_PASS"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PASS")
 	}
-	if cds.Host, ok = os.LookupEnv("SKYNET_DB_HOST"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_HOST")
+	var host, port string
+	if host, ok = os.LookupEnv("SKYNET_DB_HOST"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_HOST")
 	}
-	if cds.Port, ok = os.LookupEnv("SKYNET_DB_PORT"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_PORT")
+	if port, ok = os.LookupEnv("SKYNET_DB_PORT"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PORT")
 	}
-	return cds, nil
+	return fmt.Sprintf("mongodb://%v:%v", host, port), creds, nil
 }
 
 func main() {
@@ -95,11 +97,11 @@ func main() {
 	}
 
 	// Initialised the database connection.
-	dbCreds, err := loadDBCredentials()
+	uri, dbCreds, err := loadDBCredentials()
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to fetch db credentials"))
 	}
-	db, err := database.New(ctx, dbCreds, logger)
+	db, err := database.New(ctx, uri, dbCreds, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to connect to the db"))
 	}
@@ -155,5 +157,6 @@ func main() {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}
 
+	// TODO: Missing clean shutdown and database disconnect.
 	log.Fatal(server.ListenAndServe(4000))
 }

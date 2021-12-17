@@ -24,7 +24,8 @@ type (
 		Tags     []string `json:"tags"`
 	}
 
-	// BlockPOST describes a request to the /block endpoint.
+	// BlockWithPoWPOST describes a request to the /block endpoint
+	// containing a pow.
 	BlockWithPoWPOST struct {
 		BlockPOST
 		PoW blocker.BlockPoW `json:"pow"`
@@ -48,7 +49,7 @@ type (
 )
 
 // UnmarshalJSON implements json.Unmarshaler for a skylink.
-func (sl skylink) UnmarshalJSON(b []byte) error {
+func (sl *skylink) UnmarshalJSON(b []byte) error {
 	var link string
 	err := json.Unmarshal(b, &link)
 	if err != nil {
@@ -67,7 +68,7 @@ func (sl skylink) UnmarshalJSON(b []byte) error {
 	if err != nil {
 		return errors.AddContext(err, "invalid skylink provided")
 	}
-	sl = skylink(slNormalized.String())
+	*sl = skylink(slNormalized.String())
 	return nil
 }
 
@@ -76,7 +77,12 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	status := struct {
 		DBAlive bool `json:"dbAlive"`
 	}{}
-	err := api.staticDB.Ping(r.Context())
+
+	// Apply a timeout.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err := api.staticDB.Ping(ctx)
 	status.DBAlive = err == nil
 	skyapi.WriteJSON(w, status)
 }
@@ -164,7 +170,7 @@ func (api *API) block(ctx context.Context, bp BlockPOST, sub string, unauthentic
 		TimestampAdded: time.Now().UTC(),
 	}
 	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
-	err := api.staticDB.BlockedSkylinkCreate(ctx, skylink)
+	err := api.staticDB.CreateBlockedSkylink(ctx, skylink)
 	if err != nil {
 		return err
 	}
