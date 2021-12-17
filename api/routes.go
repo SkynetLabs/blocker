@@ -25,6 +25,7 @@ var (
 func (api *API) buildHTTPRoutes() {
 	api.staticRouter.GET("/health", api.healthGET)
 	api.staticRouter.POST("/block", api.blockPOST)
+	api.staticRouter.GET("/powblock", api.blockWithPoWGET)
 	api.staticRouter.POST("/powblock", api.blockWithPoWPOST)
 }
 

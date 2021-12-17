@@ -24,11 +24,17 @@ type (
 		Tags     []string `json:"tags"`
 	}
 
-	// BlockWithPoWPOST describes a request to the /block endpoint
+	// BlockWithPoWPOST describes a request to the /blockpow endpoint
 	// containing a pow.
 	BlockWithPoWPOST struct {
 		BlockPOST
 		PoW blocker.BlockPoW `json:"pow"`
+	}
+
+	// BlockWithPoWGET is the response a user gets from the /blockpow
+	// endpoint.
+	BlockWithPoWGET struct {
+		Target string `json:"target"`
 	}
 
 	// Reporter is a person who reported that a given skylink should be
@@ -122,6 +128,13 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 	}
 	skyapi.WriteSuccess(w)
+}
+
+// blockWithPoWGET is the handler for the /blockpow [GET] endpoint.
+func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	skyapi.WriteJSON(w, BlockWithPoWGET{
+		Target: hex.EncodeToString(blocker.MySkyTarget[:]),
+	})
 }
 
 // blockPOST blocks a skylink. It is meant to be used by trusted sources such as

@@ -261,8 +261,8 @@ func testMySkyProofVerify(t *testing.T) {
 //		Version: proofVersionV1Byte,
 //	}
 //
-//	target := types.Target{0, 0, 2, 79, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
-//	targetDuration := time.Minute
+//	target := types.Target{0, 0, 2, 85, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255}
+//	targetDuration := 50 * time.Second
 //
 //	targetHits := 0
 //	finishHits := 10

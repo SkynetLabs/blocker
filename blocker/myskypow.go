@@ -14,10 +14,10 @@ import (
 	"golang.org/x/crypto/ed25519"
 )
 
-// mySkyTarget is the target a proof needs to meet to be considered valid.
+// MySkyTarget is the target a proof needs to meet to be considered valid.
 // The Standard target was chosen empirically by running the algorithm on a i9
 // until the time it takes to solve the pow averaged out around 60s.
-var mySkyTarget = build.Select(build.Var{
+var MySkyTarget = build.Select(build.Var{
 	Dev:      [proofHashSize]byte{0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
 	Testing:  [proofHashSize]byte{0, 0, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255},
 	Standard: [proofHashSize]byte{0, 0, 2, 85, 134, 217, 6, 168, 28, 68, 106, 164, 207, 53, 55, 178, 24, 81, 162, 117, 144, 30, 90, 200, 147, 120, 124, 181, 32, 216, 184, 223},
@@ -227,7 +227,7 @@ func (p *BlockPoW) PublicKey() ed25519.PublicKey {
 
 // Verify verifies the proof against the mySkyTarget.
 func (p BlockPoW) Verify() error {
-	return p.verify(mySkyTarget)
+	return p.verify(MySkyTarget)
 }
 
 // verify verifies the proof. This includes verifying the signature and then
