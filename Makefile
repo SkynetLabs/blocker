@@ -11,6 +11,8 @@ racevars= history_size=3 halt_on_error=1 atexit_sleep_ms=2000
 # all will build and install release binaries
 all: release
 
+run = .
+
 # count says how many times to run the tests.
 count = 1
 # pkgs changes which packages the makefile calls operate on. run changes which
@@ -120,15 +122,15 @@ bench: fmt
 	go test -tags='debug testing netgo' -timeout=500s -run=XXX -bench=. $(pkgs) -count=$(count)
 
 test:
-	go test -short -tags='debug testing netgo' -timeout=5s $(pkgs) -run=. -count=$(count)
+	go test -short -tags='debug testing netgo' -timeout=5s $(pkgs) -run=$(run) -count=$(count)
 
 test-long: lint lint-ci
 	@mkdir -p cover
-	GORACE='$(racevars)' go test -race --coverprofile='./cover/cover.out' -v -failfast -tags='testing debug netgo' -timeout=30s $(pkgs) -run=. -count=$(count)
+	GORACE='$(racevars)' go test -race --coverprofile='./cover/cover.out' -v -failfast -tags='testing debug netgo' -timeout=30s $(pkgs) -run=$(run) -count=$(count)
 
 # These env var values are for testing only. They can be freely changed.
 test-int: test-long start-mongo
-	GORACE='$(racevars)' go test -race -v -tags='testing debug netgo' -timeout=300s $(integration-pkgs) -run=. -count=$(count)
+	GORACE='$(racevars)' go test -race -v -tags='testing debug netgo' -timeout=300s $(integration-pkgs) -run=$(run) -count=$(count)
 	-make stop-mongo
 
 # test-single allows us to run a single integration test.

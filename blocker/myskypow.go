@@ -2,6 +2,7 @@ package blocker
 
 import (
 	"bytes"
+	"crypto/sha512"
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
@@ -11,7 +12,6 @@ import (
 	"github.com/mimoo/GoKangarooTwelve/K12"
 	"gitlab.com/NebulousLabs/errors"
 	"golang.org/x/crypto/ed25519"
-	"golang.org/x/crypto/sha3"
 )
 
 // mySkyTarget is the target a proof needs to meet to be considered valid.
@@ -57,7 +57,7 @@ var (
 
 	// myskySignSalt is the salt for the hash of the proof which is then
 	// signed.
-	myskySignSalt = []byte("MYSKY_ID_VERIFICATION")
+	myskySignSalt = sha512.Sum512([]byte("MYSKY_ID_VERIFICATION"))
 )
 
 type (
@@ -211,6 +211,15 @@ func (p *BlockPoW) ProofBytes() []byte {
 	return b
 }
 
+// SignMessage returns the message to hash and sign for the pow.
+func (p *BlockPoW) SignMessage() []byte {
+	message := p.ProofBytes()
+	messageHash := sha512.Sum512(message)
+	combined := append(myskySignSalt[:], messageHash[:]...)
+	combinedHash := sha512.Sum512(combined)
+	return combinedHash[:]
+}
+
 // PublicKey is a helper to get the ed25519.PublicKey from the MySkyID.
 func (p *BlockPoW) PublicKey() ed25519.PublicKey {
 	return ed25519.PublicKey(p.MySkyID[:])
@@ -225,11 +234,8 @@ func (p BlockPoW) Verify() error {
 // verifying if the work used to create the proof is sufficient to meet the
 // given target.
 func (p BlockPoW) verify(target [proofHashSize]byte) error {
-	// Get the proof bytes.
-	b := p.ProofBytes()
-
-	// Salt them.
-	msg := sha3.Sum512(append(myskySignSalt, b...))
+	// Get the message for signing.
+	msg := p.SignMessage()
 
 	// Verify Signature.
 	pk := p.PublicKey()
@@ -238,6 +244,7 @@ func (p BlockPoW) verify(target [proofHashSize]byte) error {
 	}
 
 	// Verify PoW.
+	b := p.ProofBytes()
 	work := hashMySkyProof(b)
 	if bytes.Compare(target[:], work[:]) <= 0 {
 		return errInsufficientWork

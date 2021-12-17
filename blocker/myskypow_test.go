@@ -13,7 +13,6 @@ import (
 
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/NebulousLabs/fastrand"
-	"golang.org/x/crypto/sha3"
 )
 
 var (
@@ -229,10 +228,9 @@ func testMySkyProofVerify(t *testing.T) {
 		Nonce:   mySkyProofNonce{1, 2, 3, 4, 5, 6, 7, 8},
 		MySkyID: msid,
 	}
-	proofBytes := validProof.ProofBytes()
 
 	// Sign it and add the signature to the proof.
-	msg := sha3.Sum512(append(myskySignSalt, proofBytes...))
+	msg := validProof.SignMessage()
 	validProof.Signature = ed25519.Sign(sk, msg[:])
 
 	// Verify the proof against the smallest target possible. Regardless of
