@@ -100,13 +100,20 @@ type BlockPoW struct {
 
 // MarshalJSON implements the json.Marshaler interface.
 func (n mySkyProofNonce) MarshalJSON() ([]byte, error) {
-	return json.Marshal(binary.LittleEndian.Uint64(n[:]))
+	// turn number into string
+	str := fmt.Sprint(binary.LittleEndian.Uint64(n[:]))
+	return json.Marshal(str)
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
 func (n *mySkyProofNonce) UnmarshalJSON(b []byte) error {
+	var nonceStr string
+	err := json.Unmarshal(b, &nonceStr)
+	if err != nil {
+		return err
+	}
 	var nonce uint64
-	err := json.Unmarshal(b, &nonce)
+	_, err = fmt.Sscan(nonceStr, &nonce)
 	if err != nil {
 		return err
 	}

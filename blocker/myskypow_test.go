@@ -83,7 +83,7 @@ func testMySkyNonce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(b) != "12345678" {
+	if string(b) != "\"12345678\"" {
 		t.Fatal("invalid result", string(b))
 	}
 
@@ -100,12 +100,12 @@ func testMySkyNonce(t *testing.T) {
 	}
 
 	// Unmarshal invalid.
-	invalidNonce, err := json.Marshal(-1)
+	invalidNonce, err := json.Marshal("-1")
 	if err != nil {
 		t.Fatal(err)
 	}
 	err = json.Unmarshal([]byte(invalidNonce), &nonce2)
-	if err == nil || !strings.Contains(err.Error(), "json: cannot unmarshal number -1 into Go value of type uint64") {
+	if err == nil || !strings.Contains(err.Error(), "expected integer") {
 		t.Fatal("should fail", err)
 	}
 }
