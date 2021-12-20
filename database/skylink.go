@@ -6,6 +6,15 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
+// AllowListedSkylink is a skylink that is allow listed and thus prohibited from
+// ever being blocked.
+type AllowListedSkylink struct {
+	ID             primitive.ObjectID `bson:"_id,omitempty"`
+	Skylink        string             `bson:"skylink"`
+	Description    string             `bson:"description"`
+	TimestampAdded time.Time          `bson:"timestamp_added"`
+}
+
 // BlockedSkylink is a skylink blocked by an external request.
 type BlockedSkylink struct {
 	ID                primitive.ObjectID `bson:"_id,omitempty" json:"-"`

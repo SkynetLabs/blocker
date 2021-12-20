@@ -6,6 +6,20 @@ The service exposes a REST API that allows callers to request the blocking of ne
 
 The blocklist is shared between the servers that make up a portal cluster via MongoDB.
 
+# AllowList
+
+The blocker service can only block skylinks which are not in the allow list.
+To add a skylink to the allow list, one has to manually query the database and
+perform the follow operation:
+
+```
+db.getCollection('allowlist').insertOne({
+  skylink: "[INSERT V1 SKYLINK HERE]",
+	description: "[OPTIONAL - ADD A DESCRIPTION]",
+	timestamp_added: new Date(),
+})
+```
+
 # Environment
 
 This service depends on the following environment variables:
