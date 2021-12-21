@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -13,60 +11,60 @@ import (
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
-	accdb "github.com/SkynetLabs/skynet-accounts/database"
+	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
+	"go.mongodb.org/mongo-driver/mongo/options"
+)
+
+const (
+	// defaultSkydHost is where we connect to skyd unless overwritten by
+	// "API_HOST" environment variables.
+	defaultSkydHost = "sia"
+
+	// defaultSkydPort is where we connect to skyd unless overwritten by
+	// "API_PORT" environment variables.
+	defaultSkydPort = 9980
+
+	// defaultNginxCachePurgerListPath is the path at which we can find the list where
+	// we want to add the skylinks which we want purged from nginx's cache.
+	//
+	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
+	// environment variable, however it is important that this path matches the
+	// path in the nginx purge script that is part of the cron.
+	defaultNginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
+
+	// defaultNginxCachePurgeLockPath is the path to the lock directory. The blocker
+	// acquires this lock before writing to the list file, essentially ensuring
+	// the purge script does not alter the file while the blocker API is writing
+	// to it.
+	//
+	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK
+	// environment variable, however it is important that this path matches the
+	// path in the nginx purge script that is part of the cron.
+	defaultNginxCachePurgeLockPath = "/data/nginx/blocker/lock"
 )
 
 // loadDBCredentials creates a new db connection based on credentials found in
 // the environment variables.
-func loadDBCredentials() (accdb.DBCredentials, error) {
-	var cds accdb.DBCredentials
+func loadDBCredentials() (string, options.Credential, error) {
+	var creds options.Credential
 	var ok bool
-	if cds.User, ok = os.LookupEnv("SKYNET_DB_USER"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_USER")
+	if creds.Username, ok = os.LookupEnv("SKYNET_DB_USER"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_USER")
 	}
-	if cds.Password, ok = os.LookupEnv("SKYNET_DB_PASS"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_PASS")
+	if creds.Password, ok = os.LookupEnv("SKYNET_DB_PASS"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PASS")
 	}
-	if cds.Host, ok = os.LookupEnv("SKYNET_DB_HOST"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_HOST")
+	var host, port string
+	if host, ok = os.LookupEnv("SKYNET_DB_HOST"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_HOST")
 	}
-	if cds.Port, ok = os.LookupEnv("SKYNET_DB_PORT"); !ok {
-		return accdb.DBCredentials{}, errors.New("missing env var SKYNET_DB_PORT")
+	if port, ok = os.LookupEnv("SKYNET_DB_PORT"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PORT")
 	}
-	return cds, nil
-}
-
-// isSkydUp connects to the local skyd and checks its status.
-// Returns true only if skyd is fully ready.
-func isSkydUp(logger *logrus.Logger) bool {
-	status := struct {
-		Ready     bool
-		Consensus bool
-		Gateway   bool
-		Renter    bool
-	}{}
-	url := fmt.Sprintf("http://%s:%d/daemon/ready", api.SkydHost, api.SkydPort)
-	r, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		logger.Fatal(err)
-		return false
-	}
-	r.Header.Set("User-Agent", "Sia-Agent")
-	resp, err := http.DefaultClient.Do(r)
-	if err != nil {
-		logger.Warnf("Failed to query skyd: %s", err.Error())
-		return false
-	}
-	defer resp.Body.Close()
-	err = json.NewDecoder(resp.Body).Decode(&status)
-	if err != nil {
-		logger.Warnf("Bad body from skyd's /daemon/ready: %s", err.Error())
-		return false
-	}
-	return status.Ready && status.Consensus && status.Gateway && status.Renter
+	return fmt.Sprintf("mongodb://%v:%v", host, port), creds, nil
 }
 
 func main() {
@@ -100,29 +98,27 @@ func main() {
 	}
 
 	// Initialised the database connection.
-	dbCreds, err := loadDBCredentials()
+	uri, dbCreds, err := loadDBCredentials()
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to fetch db credentials"))
 	}
-	db, err := database.New(ctx, dbCreds, logger)
+	db, err := database.New(ctx, uri, dbCreds, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to connect to the db"))
 	}
 
-	// Connect to skyd.
-	skydPort, err := strconv.Atoi(os.Getenv("API_PORT"))
-	if err == nil && skydPort > 0 {
-		api.SkydPort = skydPort
+	// Blocker env vars.
+	skydPort := defaultSkydPort
+	skydPortEnv, err := strconv.Atoi(os.Getenv("API_PORT"))
+	if err == nil && skydPortEnv > 0 {
+		skydPort = skydPortEnv
 	}
-	if skydHost := os.Getenv("API_HOST"); skydHost != "" {
-		api.SkydHost = skydHost
+	skydHost := defaultSkydHost
+	if skydHostEnv := os.Getenv("API_HOST"); skydHostEnv != "" {
+		skydHost = skydHostEnv
 	}
-	if !isSkydUp(logger) {
-		log.Fatal(errors.New("skyd down, exiting"))
-	}
-
-	api.SkydAPIPassword = os.Getenv("SIA_API_PASSWORD")
-	if api.SkydAPIPassword == "" {
+	skydAPIPassword := os.Getenv("SIA_API_PASSWORD")
+	if skydAPIPassword == "" {
 		log.Fatal(errors.New("SIA_API_PASSWORD is empty, exiting"))
 	}
 
@@ -135,23 +131,39 @@ func main() {
 	}
 
 	// Initialise and start the background scanner task.
+	nginxCachePurgerListPath := defaultNginxCachePurgerListPath
 	if nginxList := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LIST"); nginxList != "" {
-		blocker.NginxCachePurgerListPath = nginxList
+		nginxCachePurgerListPath = nginxList
 	}
+	nginxCachePurgeLockPath := defaultNginxCachePurgeLockPath
 	if nginxLock := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LOCK"); nginxLock != "" {
-		blocker.NginxCachePurgeLockPath = nginxLock
+		nginxCachePurgeLockPath = nginxLock
 	}
-	blockerThread, err := blocker.New(ctx, db, logger)
+
+	// Create a skyd API.
+	skydAPI, err := skyd.NewSkydAPI(skydHost, skydAPIPassword, skydPort, db, logger)
+	if err != nil {
+		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
+	}
+	if !skydAPI.IsSkydUp() {
+		log.Fatal(errors.New("skyd down, exiting"))
+	}
+
+	// Create the blocker.
+	blockerThread, err := blocker.New(ctx, skydAPI, db, logger, nginxCachePurgerListPath, nginxCachePurgeLockPath)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
+
+	// Start blocker.
 	blockerThread.Start()
 
 	// Initialise the server.
-	server, err := api.New(db, logger)
+	server, err := api.New(skydAPI, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}
 
+	// TODO: Missing clean shutdown and database disconnect.
 	log.Fatal(server.ListenAndServe(4000))
 }

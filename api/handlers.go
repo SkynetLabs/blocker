@@ -2,13 +2,13 @@ package api
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"net/url"
 	"regexp"
 	"time"
 
+	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/julienschmidt/httprouter"
 	"gitlab.com/NebulousLabs/errors"
@@ -23,68 +23,140 @@ var (
 )
 
 type (
-	// BlockPOST ...
+	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
-		Skylink  string            `json:"skylink"`
-		Reporter database.Reporter `json:"reporter"`
-		Tags     []string          `json:"tags"`
+		Skylink  skylink  `json:"skylink"`
+		Reporter Reporter `json:"reporter"`
+		Tags     []string `json:"tags"`
+	}
+
+	// BlockWithPoWPOST describes a request to the /blockpow endpoint
+	// containing a pow.
+	BlockWithPoWPOST struct {
+		BlockPOST
+		PoW blocker.BlockPoW `json:"pow"`
+	}
+
+	// BlockWithPoWGET is the response a user gets from the /blockpow
+	// endpoint.
+	BlockWithPoWGET struct {
+		Target string `json:"target"`
+	}
+
+	// Reporter is a person who reported that a given skylink should be
+	// blocked.
+	Reporter struct {
+		Name         string `json:"name"`
+		Email        string `json:"email"`
+		OtherContact string `json:"othercontact"`
 	}
 
 	// statusResponse is what we return on block requests
 	statusResponse struct {
 		Status string `json:"status"`
 	}
+
+	// skylink is a helper type which adds custom decoding for skylinks.
+	skylink string
 )
+
+// UnmarshalJSON implements json.Unmarshaler for a skylink.
+func (sl *skylink) UnmarshalJSON(b []byte) error {
+	var link string
+	err := json.Unmarshal(b, &link)
+	if err != nil {
+		return err
+	}
+	// Trim all the redundant information.
+	link, err = extractSkylinkHash(link)
+	if err != nil {
+		return err
+	}
+	// Normalise the skylink hash. We want to use the same hash encoding in the
+	// database, regardless of the encoding of the skylink when we receive it -
+	// base32 or base64.
+	var slNormalized skymodules.Skylink
+	err = slNormalized.LoadString(link)
+	if err != nil {
+		return errors.AddContext(err, "invalid skylink provided")
+	}
+	*sl = skylink(slNormalized.String())
+	return nil
+}
 
 // healthGET returns the status of the service
 func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	status := struct {
 		DBAlive bool `json:"dbAlive"`
 	}{}
-	err := api.staticDB.Ping(r.Context())
+
+	// Apply a timeout.
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+
+	err := api.staticDB.Ping(ctx)
 	status.DBAlive = err == nil
 	skyapi.WriteJSON(w, status)
 }
 
-// blockPOST blocks a skylink
+// blockWithPoWPOST blocks a skylink. It is meant to be used by untrusted
+// sources such as the abuse report skapp. The PoW prevents users from easily
+// and anonymously blocking large numbers of skylinks. Instead it encourages
+// reuse of proofs which improves the linkability between reports, thus allowing
+// us to more easily unblock a batch of links.
+func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	// Protect against large bodies.
+	b := http.MaxBytesReader(w, r.Body, 1<<16) // 64 kib
+	defer b.Close()
+
+	// Parse the request.
+	var body BlockWithPoWPOST
+	err := json.NewDecoder(b).Decode(&body)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// Verify the pow.
+	err = body.PoW.Verify()
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// Use the MySkyID as the suband make sure we don't consider the
+	// reporter authenticated.
+	sub := hex.EncodeToString(body.PoW.MySkyID[:])
+
+	// Check whether the skylink is on the allow list
+	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
+		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// Block the link.
+	err = api.block(r.Context(), body.BlockPOST, sub, true)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+	}
+	skyapi.WriteSuccess(w)
+}
+
+// blockWithPoWGET is the handler for the /blockpow [GET] endpoint.
+func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	skyapi.WriteJSON(w, BlockWithPoWGET{
+		Target: hex.EncodeToString(blocker.MySkyTarget[:]),
+	})
+}
+
+// blockPOST blocks a skylink. It is meant to be used by trusted sources such as
+// the malware scanner or abuse email scanner.
 func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	var body BlockPOST
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
 		return
-	}
-	body.Skylink, err = extractSkylinkHash(body.Skylink)
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
-		return
-	}
-	// Normalise the skylink hash. We want to use the same hash encoding in the
-	// database, regardless of the encoding of the skylink when we receive it -
-	// base32 or base64.
-	var sl skymodules.Skylink
-	err = sl.LoadString(body.Skylink)
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
-		return
-	}
-
-	// Check whether the skylink is on the allow list
-	if api.staticIsAllowListed(r.Context(), body.Skylink) {
-		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
-		return
-	}
-
-	body.Skylink = sl.String()
-	skylink := &database.BlockedSkylink{
-		Skylink:        body.Skylink,
-		Reporter:       body.Reporter,
-		Tags:           body.Tags,
-		TimestampAdded: time.Now().UTC(),
-	}
-	// Avoid nullpointer.
-	if r.Form == nil {
-		r.Form = url.Values{}
 	}
 	sub := r.Form.Get("sub")
 	if sub == "" {
@@ -94,10 +166,15 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 			sub = u.Sub
 		}
 	}
-	skylink.Reporter.Sub = sub
-	skylink.Reporter.Unauthenticated = sub == ""
-	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
-	err = api.staticDB.BlockedSkylinkCreate(r.Context(), skylink)
+
+	// Check whether the skylink is on the allow list
+	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
+		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	// Block the link.
+	err = api.block(r.Context(), body, sub, sub == "")
 	if errors.Contains(err, database.ErrSkylinkExists) {
 		skyapi.WriteJSON(w, statusResponse{"duplicate"})
 		return
@@ -106,8 +183,30 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 		return
 	}
-	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
 	skyapi.WriteJSON(w, statusResponse{"blocked"})
+}
+
+// block blocks a skylink
+func (api *API) block(ctx context.Context, bp BlockPOST, sub string, unauthenticated bool) error {
+	skylink := &database.BlockedSkylink{
+		Skylink: string(bp.Skylink),
+		Reporter: database.Reporter{
+			Name:            bp.Reporter.Name,
+			Email:           bp.Reporter.Email,
+			OtherContact:    bp.Reporter.OtherContact,
+			Sub:             sub,
+			Unauthenticated: unauthenticated,
+		},
+		Tags:           bp.Tags,
+		TimestampAdded: time.Now().UTC(),
+	}
+	api.staticLogger.Tracef("blockPOST will block skylink %s", skylink.Skylink)
+	err := api.staticDB.CreateBlockedSkylink(ctx, skylink)
+	if err != nil {
+		return err
+	}
+	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
+	return nil
 }
 
 // extractSkylinkHash extracts the skylink hash from the given skylink that
@@ -122,54 +221,4 @@ func extractSkylinkHash(skylink string) (string, error) {
 		return m[1], nil
 	}
 	return m[2], nil
-}
-
-// staticIsAllowListed will resolve the given skylink and verify it against the
-// allow list, it returns true if the skylink is present on the allow list
-func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
-	// build the request to resolve the skylink with skyd
-	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", SkydHost, SkydPort, skylink)
-	api.staticLogger.Debugf("isAllowListed: GET on %+s", url)
-	req, err := http.NewRequest(http.MethodGet, url, nil)
-	if err != nil {
-		api.staticLogger.Error("failed to build request to skyd", err)
-		return false
-	}
-
-	// set headers and execute the request
-	req.Header.Set("User-Agent", "Sia-Agent")
-	req.Header.Set("Authorization", AuthHeader())
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		api.staticLogger.Error("failed to make request to skyd", err)
-		return false
-	}
-	defer resp.Body.Close()
-
-	// if the skylink was blocked it was not allow listed
-	if resp.StatusCode == http.StatusUnavailableForLegalReasons {
-		return false
-	}
-
-	// if the status code is 200 OK, swap the skylink against the resolved
-	// skylink before checking it against the allow list
-	if resp.StatusCode == http.StatusOK {
-		resolved := struct {
-			Skylink string
-		}{}
-		err = json.NewDecoder(resp.Body).Decode(&resolved)
-		if err != nil {
-			api.staticLogger.Error("bad response body from skyd", err)
-			return false
-		}
-		skylink = resolved.Skylink
-	}
-
-	// check whether the skylink is allow listed
-	allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink)
-	if err != nil {
-		api.staticLogger.Error("failed to verify skylink against the allow list", err)
-		return false
-	}
-	return allowlisted
 }

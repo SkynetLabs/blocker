@@ -2,19 +2,16 @@ package database
 
 import (
 	"context"
-	"fmt"
-	"net/url"
 	"strings"
 	"time"
 
-	"github.com/SkynetLabs/skynet-accounts/database"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
+	"go.mongodb.org/mongo-driver/mongo/writeconcern"
 )
 
 var (
@@ -50,27 +47,40 @@ var (
 // DB holds a connection to the database, as well as helpful shortcuts to
 // collections and utilities.
 type DB struct {
-	Ctx       context.Context
-	DB        *mongo.Database
-	Skylinks  *mongo.Collection
-	AllowList *mongo.Collection
-	Logger    *logrus.Logger
+	ctx             context.Context
+	staticClient    *mongo.Client
+	staticDB        *mongo.Database
+	staticAllowList *mongo.Collection
+	staticSkylinks  *mongo.Collection
+	staticLogger    *logrus.Logger
 }
 
 // New creates a new database connection.
-func New(ctx context.Context, creds database.DBCredentials, logger *logrus.Logger) (*DB, error) {
-	return NewCustomDB(ctx, dbName, creds, logger)
+func New(ctx context.Context, uri string, creds options.Credential, logger *logrus.Logger) (*DB, error) {
+	return NewCustomDB(ctx, uri, dbName, creds, logger)
 }
 
 // NewCustomDB creates a new database connection to a database with a custom name.
-func NewCustomDB(ctx context.Context, dbName string, creds database.DBCredentials, logger *logrus.Logger) (*DB, error) {
+func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.Credential, logger *logrus.Logger) (*DB, error) {
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
 	}
 	if logger == nil {
 		return nil, errors.New("invalid logger provided")
 	}
-	c, err := mongo.NewClient(options.Client().ApplyURI(connectionString(creds)))
+
+	// Prepare the options for connecting to the db.
+	opts := options.Client().
+		ApplyURI(uri).
+		SetAuth(creds).
+		SetReadPreference(readpref.Primary()).
+		SetWriteConcern(writeconcern.New(
+			writeconcern.WMajority(),
+			writeconcern.WTimeout(time.Second*30),
+		)).
+		SetCompressors([]string{"zstd,zlib,snappy"})
+
+	c, err := mongo.NewClient(opts)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to create a new db client")
 	}
@@ -84,26 +94,32 @@ func NewCustomDB(ctx context.Context, dbName string, creds database.DBCredential
 		return nil, err
 	}
 	return &DB{
-		Ctx:       ctx,
-		DB:        db,
-		Skylinks:  db.Collection(dbSkylinks),
-		AllowList: db.Collection(dbAllowList),
-		Logger:    logger,
+		ctx:             ctx,
+		staticClient:    c,
+		staticDB:        db,
+		staticAllowList: db.Collection(dbAllowList),
+		staticSkylinks:  db.Collection(dbSkylinks),
+		staticLogger:    logger,
 	}, nil
+}
+
+// Close disconnects the db.
+func (db *DB) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	return db.staticClient.Disconnect(ctx)
 }
 
 // Ping sends a ping command to verify that the client can connect to the DB and
 // specifically to the primary.
 func (db *DB) Ping(ctx context.Context) error {
-	ctx2, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-	return db.DB.Client().Ping(ctx2, readpref.Primary())
+	return db.staticDB.Client().Ping(ctx, readpref.Primary())
 }
 
 // BlockedSkylink fetches the DB record that corresponds to the given skylink
 // from the database.
 func (db *DB) BlockedSkylink(ctx context.Context, s string) (*BlockedSkylink, error) {
-	sr := db.Skylinks.FindOne(ctx, bson.M{"skylink": s})
+	sr := db.staticSkylinks.FindOne(ctx, bson.M{"skylink": s})
 	if sr.Err() != nil {
 		return nil, sr.Err()
 	}
@@ -115,49 +131,46 @@ func (db *DB) BlockedSkylink(ctx context.Context, s string) (*BlockedSkylink, er
 	return &sl, nil
 }
 
-// BlockedSkylinkByID fetches the DB record that corresponds to the given skylink by
-// its DB ID.
-func (db *DB) BlockedSkylinkByID(ctx context.Context, id primitive.ObjectID) (*BlockedSkylink, error) {
-	sr := db.Skylinks.FindOne(ctx, bson.M{"_id": id})
-	if sr.Err() != nil {
-		return nil, sr.Err()
-	}
-	var sl BlockedSkylink
-	err := sr.Decode(&sl)
-	if err != nil {
-		return nil, err
-	}
-	return &sl, nil
-}
-
-// BlockedSkylinkCreate creates a new skylink. If the skylink already exists it
-// does nothing.
-func (db *DB) BlockedSkylinkCreate(ctx context.Context, skylink *BlockedSkylink) error {
-	// Try and insert the skylink
-	_, err := db.Skylinks.InsertOne(ctx, skylink)
+// CreateBlockedSkylink creates a new skylink. If the skylink already exists it does
+// nothing.
+func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
+	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
-		db.Logger.Debugf("BlockedSkylinkCreate: duplicate key, returning '%s'", ErrSkylinkExists.Error())
+		db.staticLogger.Debugf("CreateBlockedSkylink: duplicate key, returning '%s'", ErrSkylinkExists.Error())
 		// This skylink already exists in the DB.
 		return ErrSkylinkExists
 	}
 	if err != nil {
-		db.Logger.Debugf("BlockedSkylinkCreate: mongodb error '%s'", err.Error())
+		db.staticLogger.Debugf("CreateBlockedSkylink: mongodb error '%s'", err.Error())
 	}
 	return err
 }
 
-// BlockedSkylinkSave saves the given BlockedSkylink record to the database.
-func (db *DB) BlockedSkylinkSave(ctx context.Context, skylink *BlockedSkylink) error {
-	filter := bson.M{"_id": skylink.ID}
-	opts := &options.ReplaceOptions{
-		Upsert: &True,
+// IsAllowListed returns whether the given skylink is on the allow list.
+func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
+	res := db.staticAllowList.FindOne(ctx, bson.M{"skylink": skylink})
+	if isDocumentNotFound(res.Err()) {
+		return false, nil
 	}
-	_, err := db.Skylinks.ReplaceOne(ctx, filter, skylink, opts)
-	if err != nil {
-		return errors.AddContext(err, "failed to save")
+	if res.Err() != nil {
+		return false, res.Err()
 	}
-	return nil
+	return true, nil
 }
+
+// BlockedSkylinkSave saves the given BlockedSkylink record to the database.
+// NOTE: commented out since this method isn't used or tested.
+//func (db *DB) BlockedSkylinkSave(ctx context.Context, skylink *BlockedSkylink) error {
+//	filter := bson.M{"_id": skylink.ID}
+//	opts := &options.ReplaceOptions{
+//		Upsert: &True,
+//	}
+//	_, err := db.staticSkylinks.ReplaceOne(ctx, filter, skylink, opts)
+//	if err != nil {
+//		return errors.AddContext(err, "failed to save")
+//	}
+//	return nil
+//}
 
 // SkylinksToBlock sweeps the database for new skylinks. It uses the latest
 // block timestamp for this server which is retrieves from the DB. It scans all
@@ -171,19 +184,19 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	// Push cutoff one hour into the past in order to compensate of any
 	// potential system time drift.
 	cutoff = cutoff.Add(-time.Hour)
-	db.Logger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
+	db.staticLogger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
 
 	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff}}
-	c, err := db.DB.Collection(dbSkylinks).Find(db.Ctx, filter)
+	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
 	}
 	list := make([]BlockedSkylink, 0)
-	err = c.All(db.Ctx, &list)
+	err = c.All(db.ctx, &list)
 	if err != nil {
 		return nil, err
 	}
-	db.Logger.Tracef("SkylinksToBlock: returning list %v", list)
+	db.staticLogger.Tracef("SkylinksToBlock: returning list %v", list)
 	return list, nil
 }
 
@@ -191,7 +204,7 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 // skylink that was blocked. When fetching new SkylinksToBlock we should start
 // from that timestamp (and one hour before that).
 func (db *DB) LatestBlockTimestamp() (time.Time, error) {
-	sr := db.DB.Collection(dbLatestBlockTimestamps).FindOne(db.Ctx, bson.M{"server_name": ServerDomain})
+	sr := db.staticDB.Collection(dbLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerDomain})
 	if sr.Err() != nil && sr.Err() != mongo.ErrNoDocuments {
 		return time.Time{}, sr.Err()
 	}
@@ -215,7 +228,7 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 	filter := bson.M{"server_name": ServerDomain}
 	value := bson.M{"$set": bson.M{"server_name": ServerDomain, "latest_block": t}}
 	opts := options.UpdateOptions{Upsert: &True}
-	ur, err := db.DB.Collection(dbLatestBlockTimestamps).UpdateOne(db.Ctx, filter, value, &opts)
+	ur, err := db.staticDB.Collection(dbLatestBlockTimestamps).UpdateOne(db.ctx, filter, value, &opts)
 	if err != nil {
 		return errors.AddContext(err, "failed to update")
 	}
@@ -223,39 +236,6 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 		return errors.New("no entries updated")
 	}
 	return nil
-}
-
-// IsAllowListed returns whether the given skylink is on the allow list.
-func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
-	res := db.AllowList.FindOne(ctx, bson.M{"skylink": skylink})
-	if isDocumentNotFound(res.Err()) {
-		return false, nil
-	}
-	if res.Err() != nil {
-		return false, res.Err()
-	}
-	return true, nil
-}
-
-// connectionString is a helper that returns a valid MongoDB connection string
-// based on the passed credentials and a set of constants. The connection string
-// is using the standalone approach because the service is supposed to talk to
-// the replica set only via the local node.
-// See https://docs.mongodb.com/manual/reference/connection-string/
-func connectionString(creds database.DBCredentials) string {
-	// There are some symbols in usernames and passwords that need to be escaped.
-	// See https://docs.mongodb.com/manual/reference/connection-string/#components
-	return fmt.Sprintf(
-		"mongodb://%s:%s@%s:%s/?compressors=%s&readPreference=%s&w=%s&wtimeoutMS=%s",
-		url.QueryEscape(creds.User),
-		url.QueryEscape(creds.Password),
-		creds.Host,
-		creds.Port,
-		"zstd,zlib,snappy",
-		"primary",
-		"majority",
-		"30000",
-	)
 }
 
 // ensureDBSchema checks that we have all collections and indexes we need and
