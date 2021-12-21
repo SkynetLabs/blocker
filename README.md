@@ -15,8 +15,8 @@ perform the follow operation:
 ```
 db.getCollection('allowlist').insertOne({
   skylink: "[INSERT V1 SKYLINK HERE]",
-	description: "[OPTIONAL - ADD A DESCRIPTION]",
-	timestamp_added: new Date(),
+  description: "[INSERT SKYLINK DESCRIPTION]",
+  timestamp_added: new Date(),
 })
 ```
 

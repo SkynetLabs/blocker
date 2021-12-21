@@ -84,10 +84,11 @@ func NewCustomDB(ctx context.Context, dbName string, creds database.DBCredential
 		return nil, err
 	}
 	return &DB{
-		Ctx:      ctx,
-		DB:       db,
-		Skylinks: db.Collection(dbSkylinks),
-		Logger:   logger,
+		Ctx:       ctx,
+		DB:        db,
+		Skylinks:  db.Collection(dbSkylinks),
+		AllowList: db.Collection(dbAllowList),
+		Logger:    logger,
 	}, nil
 }
 
