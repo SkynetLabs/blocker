@@ -229,15 +229,11 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 	res := db.AllowList.FindOne(ctx, bson.M{"skylink": skylink})
 	if isDocumentNotFound(res.Err()) {
-		fmt.Println("doc not found")
 		return false, nil
 	}
-
 	if res.Err() != nil {
-		fmt.Println("doc err", res.Err())
 		return false, res.Err()
 	}
-	fmt.Println("allow listed")
 	return true, nil
 }
 

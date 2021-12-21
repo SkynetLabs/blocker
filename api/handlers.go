@@ -19,7 +19,7 @@ import (
 var (
 	// ErrSkylinkAllowListed is returned when we try to add a skylink to the
 	// database that is part of the allow list.
-	ErrSkylinkAllowListed = errors.New("skylink can not be blocked, it is part of the allow list")
+	ErrSkylinkAllowListed = errors.New("skylink can not be blocked, it is allow listed")
 )
 
 type (
@@ -171,7 +171,6 @@ func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
 		api.staticLogger.Error("bad response body from skyd", err)
 		return false
 	}
-	fmt.Println("res", resolved, resolved.Skylink)
 
 	allowlisted, err := api.staticDB.IsAllowListed(ctx, resolved.Skylink)
 	if err != nil {
