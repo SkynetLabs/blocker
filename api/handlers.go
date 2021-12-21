@@ -155,6 +155,7 @@ func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
 		api.staticLogger.Error("bad response body from skyd", err)
 		return false
 	}
+	fmt.Println("res", resolved, resolved.Skylink)
 
 	allowlisted, err := api.staticDB.IsAllowListed(ctx, resolved.Skylink)
 	if err != nil {
