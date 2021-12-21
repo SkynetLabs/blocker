@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"fmt"
 	"net/http"
 
@@ -56,4 +57,10 @@ func (api *API) ListenAndServe(port int) error {
 // ServeHTTP implements the http.Handler interface.
 func (api *API) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	api.staticRouter.ServeHTTP(w, req)
+}
+
+// AuthHeader returns the value we need to set to the `Authorization` header in
+// order to call `skyd`.
+func AuthHeader() string {
+	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(":"+SkydAPIPassword)))
 }

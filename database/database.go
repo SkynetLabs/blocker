@@ -24,9 +24,6 @@ var (
 	// ErrSkylinkExists is returned when we try to add a skylink to the database
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
-	// ErrSkylinkAllowListed is returned when we try to add a skylink to the
-	// database that is part of the allow list.
-	ErrSkylinkAllowListed = errors.New("skylink can not be blocked, it is part of the allow list")
 
 	// mongoErrNoDocuments is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
@@ -135,20 +132,8 @@ func (db *DB) BlockedSkylinkByID(ctx context.Context, id primitive.ObjectID) (*B
 // BlockedSkylinkCreate creates a new skylink. If the skylink already exists it
 // does nothing.
 func (db *DB) BlockedSkylinkCreate(ctx context.Context, skylink *BlockedSkylink) error {
-	allowlisted, err := db.isAllowListed(ctx, skylink.Skylink)
-	if err != nil {
-		db.Logger.Debugf("BlockedSkylinkCreate: failed to check whether skylink '%v' is on the allow list, error '%s'", skylink.Skylink, err.Error())
-		return err
-	}
-
-	if allowlisted {
-		db.Logger.Debugf("BlockedSkylinkCreate: trying to block an allow listed skylink, returning '%s'", ErrSkylinkAllowListed.Error())
-		// This skylink was allow listed in the DB.
-		return ErrSkylinkAllowListed
-	}
-
 	// Try and insert the skylink
-	_, err = db.Skylinks.InsertOne(ctx, skylink)
+	_, err := db.Skylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
 		db.Logger.Debugf("BlockedSkylinkCreate: duplicate key, returning '%s'", ErrSkylinkExists.Error())
 		// This skylink already exists in the DB.
@@ -239,8 +224,8 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 	return nil
 }
 
-// isAllowListed returns whether the given skylink is on the allow list.
-func (db *DB) isAllowListed(ctx context.Context, skylink string) (bool, error) {
+// IsAllowListed returns whether the given skylink is on the allow list.
+func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 	res := db.AllowList.FindOne(ctx, bson.M{"skylink": skylink})
 	if isDocumentNotFound(res.Err()) {
 		return false, nil

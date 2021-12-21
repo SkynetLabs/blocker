@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -12,6 +14,12 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
+)
+
+var (
+	// ErrSkylinkAllowListed is returned when we try to add a skylink to the
+	// database that is part of the allow list.
+	ErrSkylinkAllowListed = errors.New("skylink can not be blocked, it is part of the allow list")
 )
 
 type (
@@ -60,6 +68,18 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "invalid skylink provided").Error()}, http.StatusBadRequest)
 		return
 	}
+
+	// Check whether the skylink is on the allow list
+	allowListed, err := api.isAllowListed(r.Context(), body.Skylink)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "failed to check whether the skylink is present on the allow list").Error()}, http.StatusInternalServerError)
+		return
+	}
+	if allowListed {
+		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
+		return
+	}
+
 	body.Skylink = sl.String()
 	skylink := &database.BlockedSkylink{
 		Skylink:        body.Skylink,
@@ -107,4 +127,40 @@ func extractSkylinkHash(skylink string) (string, error) {
 		return m[1], nil
 	}
 	return m[2], nil
+}
+
+// isAllowListed will resolve the given skylink and verify it against the allow
+// list, it returns true if the skylink is present on the allow list
+func (api *API) isAllowListed(ctx context.Context, skylink string) (bool, error) {
+	// build the request to resolve the skylink with skyd
+	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", SkydHost, SkydPort, skylink)
+	api.staticLogger.Debugf("isAllowListed: GET on %+s", url)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return false, errors.AddContext(err, "failed to build request to skyd")
+	}
+
+	// set headers and execute the request
+	req.Header.Set("User-Agent", "Sia-Agent")
+	req.Header.Set("Authorization", AuthHeader())
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return false, errors.AddContext(err, "failed to make request to skyd")
+	}
+	defer resp.Body.Close()
+
+	// decode the body
+	resolved := struct {
+		Skylink string
+	}{}
+	err = json.NewDecoder(resp.Body).Decode(&resolved)
+	if err != nil {
+		return false, errors.AddContext(err, "bad response body from skyd")
+	}
+
+	allowlisted, err := api.staticDB.IsAllowListed(ctx, resolved.Skylink)
+	if err != nil {
+		return false, errors.AddContext(err, "failed to check whether the skylink is allow listed")
+	}
+	return allowlisted, nil
 }

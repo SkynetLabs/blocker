@@ -3,7 +3,6 @@ package blocker
 import (
 	"bytes"
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -240,7 +239,7 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 		return errors.AddContext(err, "failed to build request to skyd")
 	}
 	req.Header.Set("User-Agent", "Sia-Agent")
-	req.Header.Set("Authorization", authHeader())
+	req.Header.Set("Authorization", api.AuthHeader())
 	bl.staticLogger.Debugf("blockSkylinks: headers: %+v", req.Header)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -313,10 +312,4 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 		}
 	}
 	return nil
-}
-
-// authHeader returns the value we need to set to the `Authorization` header in
-// order to call `skyd`.
-func authHeader() string {
-	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(":"+api.SkydAPIPassword)))
 }
