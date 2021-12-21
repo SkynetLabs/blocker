@@ -130,7 +130,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 
 	// Check whether the skylink is on the allow list
 	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
-		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
+		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
 
@@ -139,7 +139,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 	}
-	skyapi.WriteSuccess(w)
+	skyapi.WriteJSON(w, statusResponse{"reported"})
 }
 
 // blockWithPoWGET is the handler for the /blockpow [GET] endpoint.
@@ -176,14 +176,14 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	// Block the link.
 	err = api.block(r.Context(), body, sub, sub == "")
 	if errors.Contains(err, database.ErrSkylinkExists) {
-		skyapi.WriteJSON(w, statusResponse{"duplicate"})
+		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 		return
 	}
-	skyapi.WriteJSON(w, statusResponse{"blocked"})
+	skyapi.WriteJSON(w, statusResponse{"reported"})
 }
 
 // block blocks a skylink
