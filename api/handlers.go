@@ -151,28 +151,22 @@ func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
 		return false
 	}
 
-	// if the status code indicates the skylink provided was deemed invalid,
-	// check the allowlist for the given skylink
-	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusInternalServerError {
-		allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink)
+	// if the status code is 200 OK, swap the skylink against the resolved
+	// skylink before checking it against the allow list
+	if resp.StatusCode == http.StatusOK {
+		resolved := struct {
+			Skylink string
+		}{}
+		err = json.NewDecoder(resp.Body).Decode(&resolved)
 		if err != nil {
-			api.staticLogger.Error("failed to verify skylink against the allow list", err)
+			api.staticLogger.Error("bad response body from skyd", err)
 			return false
 		}
-		return allowlisted
+		skylink = resolved.Skylink
 	}
 
-	// in all other cases use the resolved skylink when checking the allow list
-	resolved := struct {
-		Skylink string
-	}{}
-	err = json.NewDecoder(resp.Body).Decode(&resolved)
-	if err != nil {
-		api.staticLogger.Error("bad response body from skyd", err)
-		return false
-	}
-
-	allowlisted, err := api.staticDB.IsAllowListed(ctx, resolved.Skylink)
+	// check whether the skylink is allow listed
+	allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink)
 	if err != nil {
 		api.staticLogger.Error("failed to verify skylink against the allow list", err)
 		return false
