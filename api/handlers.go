@@ -16,12 +16,6 @@ import (
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 )
 
-var (
-	// ErrSkylinkAllowListed is returned when we try to add a skylink to the
-	// database that is part of the allow list.
-	ErrSkylinkAllowListed = errors.New("skylink can not be blocked, it is allow listed")
-)
-
 type (
 	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
@@ -169,14 +163,14 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 
 	// Check whether the skylink is on the allow list
 	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
-		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
+		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
 
 	// Block the link.
 	err = api.block(r.Context(), body, sub, sub == "")
 	if errors.Contains(err, database.ErrSkylinkExists) {
-		skyapi.WriteJSON(w, statusResponse{"reported"})
+		skyapi.WriteJSON(w, statusResponse{"duplicate"})
 		return
 	}
 	if err != nil {
