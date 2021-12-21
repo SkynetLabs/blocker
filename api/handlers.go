@@ -146,7 +146,23 @@ func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
 	}
 	defer resp.Body.Close()
 
-	// decode the body
+	// if the skylink was blocked it was not allow listed
+	if resp.StatusCode == http.StatusUnavailableForLegalReasons {
+		return false
+	}
+
+	// if the status code indicates it was a bad request, check the allow list
+	// for the given skylink
+	if resp.StatusCode == http.StatusBadRequest {
+		allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink)
+		if err != nil {
+			api.staticLogger.Error("failed to verify skylink against the allow list", err)
+			return false
+		}
+		return allowlisted
+	}
+
+	// in all other cases use the resolved skylink when checking the allow list
 	resolved := struct {
 		Skylink string
 	}{}
