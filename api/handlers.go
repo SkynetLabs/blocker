@@ -70,12 +70,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	}
 
 	// Check whether the skylink is on the allow list
-	allowListed, err := api.isAllowListed(r.Context(), body.Skylink)
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{errors.AddContext(err, "failed to check whether the skylink is present on the allow list").Error()}, http.StatusInternalServerError)
-		return
-	}
-	if allowListed {
+	if api.staticIsAllowListed(r.Context(), body.Skylink) {
 		skyapi.WriteError(w, skyapi.Error{ErrSkylinkAllowListed.Error()}, http.StatusBadRequest)
 		return
 	}
@@ -129,15 +124,16 @@ func extractSkylinkHash(skylink string) (string, error) {
 	return m[2], nil
 }
 
-// isAllowListed will resolve the given skylink and verify it against the allow
-// list, it returns true if the skylink is present on the allow list
-func (api *API) isAllowListed(ctx context.Context, skylink string) (bool, error) {
+// staticIsAllowListed will resolve the given skylink and verify it against the
+// allow list, it returns true if the skylink is present on the allow list
+func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
 	// build the request to resolve the skylink with skyd
 	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", SkydHost, SkydPort, skylink)
 	api.staticLogger.Debugf("isAllowListed: GET on %+s", url)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return false, errors.AddContext(err, "failed to build request to skyd")
+		api.staticLogger.Error("failed to build request to skyd", err)
+		return false
 	}
 
 	// set headers and execute the request
@@ -145,7 +141,8 @@ func (api *API) isAllowListed(ctx context.Context, skylink string) (bool, error)
 	req.Header.Set("Authorization", AuthHeader())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return false, errors.AddContext(err, "failed to make request to skyd")
+		api.staticLogger.Error("failed to make request to skyd", err)
+		return false
 	}
 	defer resp.Body.Close()
 
@@ -155,12 +152,14 @@ func (api *API) isAllowListed(ctx context.Context, skylink string) (bool, error)
 	}{}
 	err = json.NewDecoder(resp.Body).Decode(&resolved)
 	if err != nil {
-		return false, errors.AddContext(err, "bad response body from skyd")
+		api.staticLogger.Error("bad response body from skyd", err)
+		return false
 	}
 
 	allowlisted, err := api.staticDB.IsAllowListed(ctx, resolved.Skylink)
 	if err != nil {
-		return false, errors.AddContext(err, "failed to check whether the skylink is allow listed")
+		api.staticLogger.Error("failed to verify skylink against the allow list", err)
+		return false
 	}
-	return allowlisted, nil
+	return allowlisted
 }
