@@ -151,9 +151,9 @@ func (api *API) staticIsAllowListed(ctx context.Context, skylink string) bool {
 		return false
 	}
 
-	// if the status code indicates it was a bad request, check the allow list
-	// for the given skylink
-	if resp.StatusCode == http.StatusBadRequest {
+	// if the status code indicates the skylink provided was deemed invalid,
+	// check the allowlist for the given skylink
+	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusInternalServerError {
 		allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink)
 		if err != nil {
 			api.staticLogger.Error("failed to verify skylink against the allow list", err)
