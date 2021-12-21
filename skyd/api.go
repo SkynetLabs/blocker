@@ -97,7 +97,7 @@ func (skyd *SkydAPI) BlockSkylinks(sls []string) error {
 // allow list, it returns true if the skylink is present on the allow list
 func (skyd *SkydAPI) IsAllowListed(ctx context.Context, skylink string) bool {
 	// build the request to resolve the skylink with skyd
-	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", skyd.staticSkydHost, skyd.staticSkydPort)
+	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", skyd.staticSkydHost, skyd.staticSkydPort, skylink)
 	skyd.staticLogger.Debugf("isAllowListed: GET on %+s", url)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
