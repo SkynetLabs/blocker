@@ -173,8 +173,8 @@ func (skyd *SkydAPI) IsSkydUp() bool {
 	return status.Ready && status.Consensus && status.Gateway && status.Renter
 }
 
-// AuthHeader returns the value we need to set to the `Authorization` header in
-// order to call `skyd`.
+// staticAuthHeader returns the value we need to set to the `Authorization`
+// header in order to call `skyd`.
 func (skyd *SkydAPI) staticAuthHeader() string {
 	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(":"+skyd.staticSkydAPIPassword)))
 }
