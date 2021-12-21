@@ -20,6 +20,8 @@ db.getCollection('allowlist').insertOne({
 })
 ```
 
+The skylink is expected to be in the following form: `_B19BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1kaA`.
+So that's without portal and without the `sia://` prefix.
 # Environment
 
 This service depends on the following environment variables:
