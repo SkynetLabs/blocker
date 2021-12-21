@@ -11,6 +11,8 @@ racevars= history_size=3 halt_on_error=1 atexit_sleep_ms=2000
 # all will build and install release binaries
 all: release
 
+run = .
+
 # count says how many times to run the tests.
 count = 1
 # pkgs changes which packages the makefile calls operate on. run changes which
@@ -31,7 +33,6 @@ vet:
 # markdown-spellcheck runs codespell on all markdown files that are not
 # vendored.
 markdown-spellcheck:
-	pip install codespell 1>/dev/null 2>&1
 	git ls-files "*.md" :\!:"vendor/**" | xargs codespell --check-filenames
 
 # lint runs golangci-lint (which includes golint, a spellcheck of the codebase,
@@ -72,7 +73,6 @@ endef
 start-mongo:
 	-docker stop blocker-mongo-test-db 1>/dev/null 2>&1
 	-docker rm blocker-mongo-test-db 1>/dev/null 2>&1
-	chmod 400 $(shell pwd)/test/fixtures/mongo_keyfile
 	docker run \
      --rm \
      --detach \
@@ -80,8 +80,7 @@ start-mongo:
      -p $(MONGO_PORT):$(MONGO_PORT) \
      -e MONGO_INITDB_ROOT_USERNAME=$(MONGO_USER) \
      -e MONGO_INITDB_ROOT_PASSWORD=$(MONGO_PASSWORD) \
-     -v $(shell pwd)/test/fixtures/mongo_keyfile:/data/mgkey \
-	mongo:4.4.1 mongod --port=$(MONGO_PORT) --replSet=skynet --keyFile=/data/mgkey 1>/dev/null 2>&1
+	mongo:4.4.1 mongod --port=$(MONGO_PORT) --replSet=skynet 1>/dev/null 2>&1
 	# wait for mongo to start before we try to configure it
 	status=1 ; while [[ $$status -gt 0 ]]; do \
 		sleep 1 ; \
@@ -123,15 +122,15 @@ bench: fmt
 	go test -tags='debug testing netgo' -timeout=500s -run=XXX -bench=. $(pkgs) -count=$(count)
 
 test:
-	go test -short -tags='debug testing netgo' -timeout=5s $(pkgs) -run=. -count=$(count)
+	go test -short -tags='debug testing netgo' -timeout=5s $(pkgs) -run=$(run) -count=$(count)
 
 test-long: lint lint-ci
 	@mkdir -p cover
-	GORACE='$(racevars)' go test -race --coverprofile='./cover/cover.out' -v -failfast -tags='testing debug netgo' -timeout=30s $(pkgs) -run=. -count=$(count)
+	GORACE='$(racevars)' go test -race --coverprofile='./cover/cover.out' -v -failfast -tags='testing debug netgo' -timeout=30s $(pkgs) -run=$(run) -count=$(count)
 
 # These env var values are for testing only. They can be freely changed.
 test-int: test-long start-mongo
-	GORACE='$(racevars)' go test -race -v -tags='testing debug netgo' -timeout=300s $(integration-pkgs) -run=. -count=$(count)
+	GORACE='$(racevars)' go test -race -v -tags='testing debug netgo' -timeout=300s $(integration-pkgs) -run=$(run) -count=$(count)
 	-make stop-mongo
 
 # test-single allows us to run a single integration test.

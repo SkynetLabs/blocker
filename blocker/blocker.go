@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/SkynetLabs/skynet-accounts/build"
 	"github.com/sirupsen/logrus"
@@ -22,29 +21,14 @@ import (
 )
 
 const (
-	// SkylinksChunk is the max number of skylinks to be sent for blocking
+	// skylinksChunk is the max number of skylinks to be sent for blocking
 	// simultaneously.
-	SkylinksChunk = 100
+	skylinksChunk = 100
 )
 
 var (
-	// NginxCachePurgerListPath is the path at which we can find the list where
-	// we want to add the skylinks which we want purged from nginx's cache.
-	//
-	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
-	// environment variable, however it is important that this path matches the
-	// path in the nginx purge script that is part of the cron.
-	NginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
-
-	// NginxCachePurgeLockPath is the path to the lock directory. The blocker
-	// acquires this lock before writing to the list file, essentially ensuring
-	// the purge script does not alter the file while the blocker API is writing
-	// to it.
-	//
-	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK
-	// environment variable, however it is important that this path matches the
-	// path in the nginx purge script that is part of the cron.
-	NginxCachePurgeLockPath = "/data/nginx/blocker/lock"
+	// ErrSkydOffline is returned if skyd is unreachable on startup.
+	ErrSkydOffline = errors.New("skyd is offline")
 
 	// skydTimeout is the timeout of the http calls to skyd in seconds
 	skydTimeout = "30"
@@ -73,13 +57,20 @@ var (
 // Blocker scans the database for skylinks that should be blocked and calls
 // skyd to block them.
 type Blocker struct {
+	staticSkydHost        string
+	staticSkydPort        int
+	staticSkydAPIPassword string
+
+	staticNginxCachePurgerListPath string
+	staticNginxCachePurgeLockPath  string
+
 	staticCtx    context.Context
 	staticDB     *database.DB
 	staticLogger *logrus.Logger
 }
 
 // New returns a new Blocker with the given parameters.
-func New(ctx context.Context, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
+func New(ctx context.Context, db *database.DB, logger *logrus.Logger, skydHost, skydPassword string, skydPort int, nginxCachePurgerListPath, nginxCachePurgeLockPath string) (*Blocker, error) {
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
 	}
@@ -89,11 +80,52 @@ func New(ctx context.Context, db *database.DB, logger *logrus.Logger) (*Blocker,
 	if logger == nil {
 		return nil, errors.New("invalid logger provided")
 	}
-	return &Blocker{
+	bl := &Blocker{
+		staticSkydHost:        skydHost,
+		staticSkydPort:        skydPort,
+		staticSkydAPIPassword: skydPassword,
+
+		staticNginxCachePurgerListPath: nginxCachePurgerListPath,
+		staticNginxCachePurgeLockPath:  nginxCachePurgeLockPath,
+
 		staticCtx:    ctx,
 		staticDB:     db,
 		staticLogger: logger,
-	}, nil
+	}
+	if !bl.staticIsSkydUp() {
+		return nil, ErrSkydOffline
+	}
+	return bl, nil
+}
+
+// staticIsSkydUp connects to the local skyd and checks its status.
+// Returns true only if skyd is fully ready.
+func (bl *Blocker) staticIsSkydUp() bool {
+	status := struct {
+		Ready     bool
+		Consensus bool
+		Gateway   bool
+		Renter    bool
+	}{}
+	url := fmt.Sprintf("http://%s:%d/daemon/ready", bl.staticSkydHost, bl.staticSkydPort)
+	r, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		bl.staticLogger.Error(err)
+		return false
+	}
+	r.Header.Set("User-Agent", "Sia-Agent")
+	resp, err := http.DefaultClient.Do(r)
+	if err != nil {
+		bl.staticLogger.Warnf("Failed to query skyd: %s", err.Error())
+		return false
+	}
+	defer resp.Body.Close()
+	err = json.NewDecoder(resp.Body).Decode(&status)
+	if err != nil {
+		bl.staticLogger.Warnf("Bad body from skyd's /daemon/ready: %s", err.Error())
+		return false
+	}
+	return status.Ready && status.Consensus && status.Gateway && status.Renter
 }
 
 // SweepAndBlock sweeps the DB for new skylinks, blocks them in skyd and writes
@@ -102,7 +134,7 @@ func New(ctx context.Context, db *database.DB, logger *logrus.Logger) (*Blocker,
 //
 // Note: It actually always scans one hour before the last timestamp in order to
 // avoid issues caused by clock desyncs.
-func (bl Blocker) SweepAndBlock() error {
+func (bl *Blocker) SweepAndBlock() error {
 	skylinksToBlock, err := bl.staticDB.SkylinksToBlock()
 	if errors.Contains(err, database.ErrNoDocumentsFound) {
 		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
@@ -117,8 +149,8 @@ func (bl Blocker) SweepAndBlock() error {
 	})
 
 	// Break the list into chunks of size SkylinksChunk and block them.
-	for idx := 0; idx < len(skylinksToBlock); idx += SkylinksChunk {
-		end := idx + SkylinksChunk
+	for idx := 0; idx < len(skylinksToBlock); idx += skylinksChunk {
+		end := idx + skylinksChunk
 		if end > len(skylinksToBlock) {
 			end = len(skylinksToBlock)
 		}
@@ -169,7 +201,7 @@ func (bl Blocker) SweepAndBlock() error {
 
 // Start launches a background task that periodically scans the database for
 // new skylink records and sends them for blocking.
-func (bl Blocker) Start() {
+func (bl *Blocker) Start() {
 	// Start the blocking loop.
 	go func() {
 		// sleepLength defines how long the thread will sleep before scanning
@@ -233,14 +265,14 @@ func (bl *Blocker) blockSkylinks(sls []string) error {
 		return errors.AddContext(err, "failed to build request body")
 	}
 
-	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.SkydHost, api.SkydPort, skydTimeout)
+	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", bl.staticSkydHost, bl.staticSkydPort, skydTimeout)
 	bl.staticLogger.Debugf("blockSkylinks: POST on %+s", url)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBodyBytes))
 	if err != nil {
 		return errors.AddContext(err, "failed to build request to skyd")
 	}
 	req.Header.Set("User-Agent", "Sia-Agent")
-	req.Header.Set("Authorization", authHeader())
+	req.Header.Set("Authorization", bl.staticAuthHeader())
 	bl.staticLogger.Debugf("blockSkylinks: headers: %+v", req.Header)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -273,7 +305,7 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 		// we only attempt this 3 times with a 1s sleep in between, this should
 		// not fail seeing as Nginx only moves the file
 		for i := 0; i < 3; i++ {
-			lockErr = os.Mkdir(NginxCachePurgeLockPath, 0700)
+			lockErr = os.Mkdir(bl.staticNginxCachePurgeLockPath, 0700)
 			if lockErr == nil {
 				break
 			}
@@ -288,14 +320,14 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 
 	// defer a function that releases the lock
 	defer func() {
-		err := os.Remove(NginxCachePurgeLockPath)
+		err := os.Remove(bl.staticNginxCachePurgeLockPath)
 		if err != nil {
 			bl.staticLogger.Errorf("failed to release nginx lock, err %v", err)
 		}
 	}()
 
 	// open the nginx cache list file
-	f, err := os.OpenFile(NginxCachePurgerListPath, os.O_RDWR|os.O_CREATE, 0644)
+	f, err := os.OpenFile(bl.staticNginxCachePurgerListPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
 		return err
 	}
@@ -315,8 +347,8 @@ func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
 	return nil
 }
 
-// authHeader returns the value we need to set to the `Authorization` header in
-// order to call `skyd`.
-func authHeader() string {
-	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(":"+api.SkydAPIPassword)))
+// staticAuthHeader returns the value we need to set to the `Authorization`
+// header in order to call `skyd`.
+func (bl *Blocker) staticAuthHeader() string {
+	return fmt.Sprintf("Basic %s", base64.StdEncoding.EncodeToString([]byte(":"+bl.staticSkydAPIPassword)))
 }

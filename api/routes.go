@@ -24,18 +24,9 @@ var (
 // buildHTTPRoutes registers all HTTP routes and their handlers.
 func (api *API) buildHTTPRoutes() {
 	api.staticRouter.GET("/health", api.healthGET)
-	api.staticRouter.POST("/block", api.addCORSHeader(api.blockPOST))
-}
-
-// addCORSHeader sets the CORS headers.
-func (api *API) addCORSHeader(h httprouter.Handle) httprouter.Handle {
-	return func(w http.ResponseWriter, req *http.Request, ps httprouter.Params) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		w.Header().Set("Access-Control-Allow-Origin", "https://0404guluqu38oaqapku91ed11kbhkge55smh9lhjukmlrj37lfpm8no.siasky.net")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type,access-control-allow-origin, access-control-allow-headers")
-		w.Header().Set("Access-Control-Allow-Credentials", "true")
-		h(w, req, ps)
-	}
+	api.staticRouter.POST("/block", api.blockPOST)
+	api.staticRouter.GET("/powblock", api.blockWithPoWGET)
+	api.staticRouter.POST("/powblock", api.blockWithPoWPOST)
 }
 
 // validateCookie extracts the cookie from the incoming blocking request and
