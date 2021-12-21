@@ -11,6 +11,7 @@ import (
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
+	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
@@ -139,11 +140,17 @@ func main() {
 		nginxCachePurgeLockPath = nginxLock
 	}
 
-	// Create the blocker.
-	blockerThread, err := blocker.New(ctx, db, logger, skydHost, skydAPIPassword, skydPort, nginxCachePurgerListPath, nginxCachePurgeLockPath)
-	if errors.Contains(err, blocker.ErrSkydOffline) {
+	// Create a skyd API.
+	skydAPI, err := skyd.NewSkydAPI(skydHost, skydAPIPassword, skydPort, db, logger)
+	if err != nil {
+		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
+	}
+	if !skydAPI.IsSkydUp() {
 		log.Fatal(errors.New("skyd down, exiting"))
 	}
+
+	// Create the blocker.
+	blockerThread, err := blocker.New(ctx, skydAPI, db, logger, nginxCachePurgerListPath, nginxCachePurgeLockPath)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
@@ -152,7 +159,7 @@ func main() {
 	blockerThread.Start()
 
 	// Initialise the server.
-	server, err := api.New(db, logger)
+	server, err := api.New(skydAPI, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}

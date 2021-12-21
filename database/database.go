@@ -17,7 +17,7 @@ import (
 var (
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
-	ErrNoDocumentsFound = errors.New("no documents found")
+	ErrNoDocumentsFound = errors.New("no documents")
 	// ErrSkylinkExists is returned when we try to add a skylink to the database
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
@@ -34,6 +34,8 @@ var (
 	dbName = "blocker"
 	// dbSkylinks defines the name of the skylinks collection
 	dbSkylinks = "skylinks"
+	// dbAllowList defines the name of the allowlist collection
+	dbAllowList = "allowlist"
 	// dbLatestBlockTimestamps dbLatestBlockTimestamps
 	dbLatestBlockTimestamps = "latest_block_timestamps"
 )
@@ -41,11 +43,12 @@ var (
 // DB holds a connection to the database, as well as helpful shortcuts to
 // collections and utilities.
 type DB struct {
-	ctx            context.Context
-	staticClient   *mongo.Client
-	staticDB       *mongo.Database
-	staticSkylinks *mongo.Collection
-	staticLogger   *logrus.Logger
+	ctx             context.Context
+	staticClient    *mongo.Client
+	staticDB        *mongo.Database
+	staticAllowList *mongo.Collection
+	staticSkylinks  *mongo.Collection
+	staticLogger    *logrus.Logger
 }
 
 // New creates a new database connection.
@@ -87,11 +90,12 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 		return nil, err
 	}
 	return &DB{
-		ctx:            ctx,
-		staticClient:   c,
-		staticDB:       db,
-		staticSkylinks: db.Collection(dbSkylinks),
-		staticLogger:   logger,
+		ctx:             ctx,
+		staticClient:    c,
+		staticDB:        db,
+		staticAllowList: db.Collection(dbAllowList),
+		staticSkylinks:  db.Collection(dbSkylinks),
+		staticLogger:    logger,
 	}, nil
 }
 
@@ -136,6 +140,18 @@ func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink)
 		db.staticLogger.Debugf("CreateBlockedSkylink: mongodb error '%s'", err.Error())
 	}
 	return err
+}
+
+// IsAllowListed returns whether the given skylink is on the allow list.
+func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
+	res := db.staticAllowList.FindOne(ctx, bson.M{"skylink": skylink})
+	if isDocumentNotFound(res.Err()) {
+		return false, nil
+	}
+	if res.Err() != nil {
+		return false, res.Err()
+	}
+	return true, nil
 }
 
 // BlockedSkylinkSave saves the given BlockedSkylink record to the database.
@@ -226,6 +242,16 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	// schema defines a mapping between a collection name and the indexes that
 	// must exist for that collection.
 	schema := map[string][]mongo.IndexModel{
+		dbAllowList: {
+			{
+				Keys:    bson.D{{"skylink", 1}},
+				Options: options.Index().SetName("skylink").SetUnique(true),
+			},
+			{
+				Keys:    bson.D{{"timestamp_added", 1}},
+				Options: options.Index().SetName("timestamp_added"),
+			},
+		},
 		dbSkylinks: {
 			{
 				Keys:    bson.D{{"skylink", 1}},
@@ -275,4 +301,13 @@ func ensureCollection(ctx context.Context, db *mongo.Database, collName string) 
 		}
 	}
 	return coll, nil
+}
+
+// isDocumentNotFound is a helper function that returns whether the given error
+// contains the mongo documents not found error message.
+func isDocumentNotFound(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), ErrNoDocumentsFound.Error())
 }

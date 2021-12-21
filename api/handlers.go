@@ -93,11 +93,11 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	skyapi.WriteJSON(w, status)
 }
 
-// blockWithPoWPOST blocks a skylink. It is meant to be used by untrusted sources such as
-// the abuse report skapp. The PoW prevents users from easily and anonymously
-// blocking large numbers of skylinks. Instead it encourages reuse of proofs
-// which improves the linkability between reports, thus allowing us to more
-// easily unblock a batch of links.
+// blockWithPoWPOST blocks a skylink. It is meant to be used by untrusted
+// sources such as the abuse report skapp. The PoW prevents users from easily
+// and anonymously blocking large numbers of skylinks. Instead it encourages
+// reuse of proofs which improves the linkability between reports, thus allowing
+// us to more easily unblock a batch of links.
 func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	// Protect against large bodies.
 	b := http.MaxBytesReader(w, r.Body, 1<<16) // 64 kib
@@ -122,12 +122,18 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	// reporter authenticated.
 	sub := hex.EncodeToString(body.PoW.MySkyID[:])
 
+	// Check whether the skylink is on the allow list
+	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
+		skyapi.WriteJSON(w, statusResponse{"reported"})
+		return
+	}
+
 	// Block the link.
 	err = api.block(r.Context(), body.BlockPOST, sub, true)
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 	}
-	skyapi.WriteSuccess(w)
+	skyapi.WriteJSON(w, statusResponse{"reported"})
 }
 
 // blockWithPoWGET is the handler for the /blockpow [GET] endpoint.
@@ -155,6 +161,12 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		}
 	}
 
+	// Check whether the skylink is on the allow list
+	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
+		skyapi.WriteJSON(w, statusResponse{"reported"})
+		return
+	}
+
 	// Block the link.
 	err = api.block(r.Context(), body, sub, sub == "")
 	if errors.Contains(err, database.ErrSkylinkExists) {
@@ -165,7 +177,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 		return
 	}
-	skyapi.WriteJSON(w, statusResponse{"blocked"})
+	skyapi.WriteJSON(w, statusResponse{"reported"})
 }
 
 // block blocks a skylink

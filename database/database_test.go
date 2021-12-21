@@ -48,6 +48,10 @@ func TestDatabase(t *testing.T) {
 			name: "CreateBlockedSkylink",
 			test: testCreateBlockedSkylink,
 		},
+		{
+			name: "IsAllowListedSkylink",
+			test: testIsAllowListedSkylink,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, test.test)
@@ -117,5 +121,41 @@ func testCreateBlockedSkylink(t *testing.T) {
 		fmt.Println(string(b1))
 		fmt.Println(string(b2))
 		t.Fatal("not equal")
+	}
+}
+
+// testIsAllowListedSkylink tests the 'IsAllowListed' method on the database.
+func testIsAllowListedSkylink(t *testing.T) {
+	db := newTestDB(t.Name())
+	defer db.Close()
+
+	// Add a skylink in the allow list
+	skylink := "_B19BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1kaA"
+	_, err := db.staticAllowList.InsertOne(context.Background(), &AllowListedSkylink{
+		Skylink:        skylink,
+		Description:    "test skylink",
+		TimestampAdded: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Check the result of 'IsAllowListed'
+	allowListed, err := db.IsAllowListed(context.Background(), skylink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !allowListed {
+		t.Fatal("unexpected")
+	}
+
+	// Check against a different skylink
+	skylink = "ABC9BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1ABC"
+	allowListed, err = db.IsAllowListed(context.Background(), skylink)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if allowListed {
+		t.Fatal("unexpected")
 	}
 }
