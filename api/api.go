@@ -13,10 +13,10 @@ import (
 
 // API is our central entry point to all subsystems relevant to serving requests.
 type API struct {
-	staticSkydAPI *skyd.SkydAPI
 	staticDB      *database.DB
-	staticRouter  *httprouter.Router
 	staticLogger  *logrus.Logger
+	staticRouter  *httprouter.Router
+	staticSkydAPI *skyd.SkydAPI
 }
 
 // New creates a new API instance.
@@ -27,13 +27,17 @@ func New(skydAPI *skyd.SkydAPI, db *database.DB, logger *logrus.Logger) (*API, e
 	if logger == nil {
 		return nil, errors.New("no logger provided")
 	}
+	if skydAPI == nil {
+		return nil, errors.New("no skyd API provided")
+	}
 	router := httprouter.New()
 	router.RedirectTrailingSlash = true
 
 	api := &API{
-		staticDB:     db,
-		staticRouter: router,
-		staticLogger: logger,
+		staticDB:      db,
+		staticLogger:  logger,
+		staticRouter:  router,
+		staticSkydAPI: skydAPI,
 	}
 
 	api.buildHTTPRoutes()
