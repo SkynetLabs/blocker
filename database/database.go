@@ -17,14 +17,10 @@ import (
 var (
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
-	ErrNoDocumentsFound = errors.New("no documents found")
+	ErrNoDocumentsFound = errors.New("no documents")
 	// ErrSkylinkExists is returned when we try to add a skylink to the database
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
-
-	// mongoErrNoDocuments is returned when a database operation completes
-	// successfully but it doesn't find or affect any documents.
-	mongoErrNoDocuments = errors.New("no documents in result")
 
 	// Portal is the preferred portal to use, e.g. https://siasky.net
 	Portal string
@@ -313,5 +309,5 @@ func isDocumentNotFound(err error) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), mongoErrNoDocuments.Error())
+	return strings.Contains(err.Error(), ErrNoDocumentsFound.Error())
 }
