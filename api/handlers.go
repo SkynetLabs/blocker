@@ -130,8 +130,13 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 
 	// Block the link.
 	err = api.block(r.Context(), body.BlockPOST, sub, true)
+	if errors.Contains(err, database.ErrSkylinkExists) {
+		skyapi.WriteJSON(w, statusResponse{"duplicate"})
+		return
+	}
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		return
 	}
 	skyapi.WriteJSON(w, statusResponse{"reported"})
 }
