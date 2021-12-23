@@ -27,6 +27,14 @@ const (
 	// "API_PORT" environment variables.
 	defaultSkydPort = 9980
 
+	// defaultNginxHost is where we connect to nginx unless overwritten by
+	// "NGINX_HOST" environment variables.
+	defaultNginxHost = "10.10.10.30"
+
+	// defaultNginxPort is where we connect to nginx unless overwritten by
+	// "NGINX_PORT" environment variables.
+	defaultNginxPort = 8000
+
 	// defaultNginxCachePurgerListPath is the path at which we can find the list where
 	// we want to add the skylinks which we want purged from nginx's cache.
 	//
@@ -117,6 +125,15 @@ func main() {
 	if skydHostEnv := os.Getenv("API_HOST"); skydHostEnv != "" {
 		skydHost = skydHostEnv
 	}
+	nginxPort := defaultNginxPort
+	nginxPortEnv, err := strconv.Atoi(os.Getenv("NGINX_PORT"))
+	if err == nil && nginxPortEnv > 0 {
+		nginxPort = nginxPortEnv
+	}
+	nginxHost := defaultNginxHost
+	if nginxHostEnv := os.Getenv("NGINX_HOST"); nginxHostEnv != "" {
+		nginxHost = nginxHostEnv
+	}
 	skydAPIPassword := os.Getenv("SIA_API_PASSWORD")
 	if skydAPIPassword == "" {
 		log.Fatal(errors.New("SIA_API_PASSWORD is empty, exiting"))
@@ -141,7 +158,7 @@ func main() {
 	}
 
 	// Create a skyd API.
-	skydAPI, err := skyd.NewSkydAPI(skydHost, skydAPIPassword, skydPort, db, logger)
+	skydAPI, err := skyd.NewSkydAPI(nginxHost, nginxPort, skydHost, skydAPIPassword, skydPort, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
 	}
