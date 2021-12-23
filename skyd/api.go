@@ -70,7 +70,6 @@ func (skyd *SkydAPI) BlockSkylinks(sls []string) error {
 		return errors.AddContext(err, "failed to build request body")
 	}
 
-	// TODO: use environment variables to specify the nginx IP and PORT
 	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", skyd.staticNginxHost, skyd.staticNginxPort, skydTimeout)
 
 	skyd.staticLogger.Debugf("blockSkylinks: POST on %+s", url)
