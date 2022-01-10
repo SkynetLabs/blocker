@@ -166,16 +166,24 @@ func (bl *Blocker) Start() {
 }
 
 // blockSkylinks blocks the given list of skylinks.
-func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) error {
+func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (err error) {
 	batchSize := blockBatchSize
 	start := 0
 
+	// keep track of failures so we can return a meaningful error message
+	// containing the specific skylinks that failed to get blocked
 	var failed []string
+	defer func() {
+		if len(failed) > 0 {
+			err = fmt.Errorf("block skylinks failed with errors: %v", failed)
+		}
+	}()
+
 	for start < len(skylinks) {
 		// check whether we need to escape
 		select {
 		case <-bl.staticCtx.Done():
-			return nil
+			return
 		default:
 		}
 
@@ -191,7 +199,7 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) error {
 			batch[i] = sl.Skylink
 		}
 
-		// trace the current batch
+		// trace the skylinks in the current batch
 		bl.staticLogger.Tracef("SweepAndBlock will block skylinks: %+v", batch)
 
 		// send the batch to skyd, if an error occurs and the current batch size
@@ -205,7 +213,11 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) error {
 
 		// if an error occurs add it to the failed array
 		if err != nil {
-			failed = append(failed, fmt.Sprintf("failed blocking skylink '%v', err %v", batch[0], err))
+			if len(batch) == 1 {
+				failed = append(failed, fmt.Sprintf("failed blocking skylink '%v', err %v", batch[0], err))
+			} else {
+				bl.staticLogger.Errorf("Critical Developer Error, this code should only execute if the length of the batch equals one")
+			}
 		}
 
 		// if no error has occurred yet, update the latest block timestamp
@@ -220,11 +232,7 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) error {
 		// update start
 		start = end
 	}
-
-	if len(failed) > 0 {
-		return fmt.Errorf("block skylinks failed with errors: %v", failed)
-	}
-	return nil
+	return
 }
 
 // writeToNginxCachePurger appends all given skylinks to the file at path
