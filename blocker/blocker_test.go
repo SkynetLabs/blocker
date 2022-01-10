@@ -81,7 +81,7 @@ func testBlockSkylinks(t *testing.T) {
 	// an error to be thrown in skyd, this will ensure the blocker tries:
 	// - all skylinks in 1 batch
 	// - a batch size of 10, which still fails
-	// - all skylinks in a batch size of 1, which returns the failing skykink
+	// - all skylinks in a batch size of 1, which returns the failing skylink
 	var skylinks []database.BlockedSkylink
 	var i int
 	for ; i < 9; i++ {
