@@ -18,6 +18,11 @@ var (
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
 	ErrNoDocumentsFound = errors.New("no documents")
+
+	// ErrNoEntriesUpdated is returned when no entries were updated after an
+	// update was performed.
+	ErrNoEntriesUpdated = errors.New("no entries updated")
+
 	// ErrSkylinkExists is returned when we try to add a skylink to the database
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
@@ -183,7 +188,9 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	db.staticLogger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
 
 	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff}}
-	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter)
+	opts := options.Find()
+	opts.SetSort(bson.D{{"timestamp_added", 1}})
+	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
 	}
@@ -229,7 +236,7 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 		return errors.AddContext(err, "failed to update")
 	}
 	if ur.ModifiedCount+ur.UpsertedCount == 0 {
-		return errors.New("no entries updated")
+		return ErrNoEntriesUpdated
 	}
 	return nil
 }

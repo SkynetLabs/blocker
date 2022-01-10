@@ -158,7 +158,7 @@ func main() {
 	}
 
 	// Create a skyd API.
-	skydAPI, err := skyd.NewSkydAPI(nginxHost, nginxPort, skydHost, skydAPIPassword, skydPort, db, logger)
+	skydAPI, err := skyd.NewAPI(nginxHost, nginxPort, skydHost, skydAPIPassword, skydPort, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
 	}

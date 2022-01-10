@@ -14,7 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-// newTestDB creates a new database for a given test's name.
+// NewTestDB creates a new database for a given test's name.
 func newTestDB(dbName string) *DB {
 	dbName = strings.ReplaceAll(dbName, "/", "-")
 	logger := logrus.New()
