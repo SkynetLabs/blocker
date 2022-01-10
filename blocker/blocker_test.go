@@ -15,6 +15,9 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+// mockSkyd is a helper struct that implements the skyd API, all methods are
+// essentially a no-op except for 'BlockSkysslinks' which keeps track of the
+// arguments with which it is called
 type mockSkyd struct {
 	BlockSkylinksReqs [][]string
 }
