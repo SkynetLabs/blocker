@@ -74,6 +74,9 @@ func testBlockSkylinks(t *testing.T) {
 		panic(err)
 	}
 
+	// defer a db close
+	defer blocker.staticDB.Close()
+
 	ts := time.Now().UTC()
 	ts = ts.Truncate(time.Second)
 
@@ -98,9 +101,16 @@ func testBlockSkylinks(t *testing.T) {
 		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i), TimestampAdded: ts})
 	}
 
-	err = blocker.blockSkylinks(skylinks)
+	blocked, failed, err := blocker.blockSkylinks(skylinks)
 	if err == nil {
 		t.Fatal("expected error to be thrown")
+	}
+	// assert blocked and failed are returned correctly
+	if blocked != 15 {
+		t.Fatalf("unexpected return values for blocked, %v != 15", blocked)
+	}
+	if failed != 1 {
+		t.Fatalf("unexpected return values for failed, %v != 1", failed)
 	}
 	// assert the error contains the skylink that failed
 	if !strings.Contains(err.Error(), "failed blocking skylink 'throwerror'") {
@@ -150,7 +160,7 @@ func newTestBlocker(dbName string, api skyd.API) (*Blocker, error) {
 	}
 
 	// create the blocker
-	blocker, err := New(context.Background(), api, db, logger, "", "")
+	blocker, err := New(context.Background(), api, db, logger)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -159,6 +160,61 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 	return true, nil
 }
 
+// MarkAsSucceeded will toggle the failed flag for all documents in the given
+// list of skylinks that are currently marked as failed.
+func (db *DB) MarkAsSucceeded(skylinks []BlockedSkylink) error {
+	// extract all ids
+	ids := make([]primitive.ObjectID, len(skylinks))
+	for i, sl := range skylinks {
+		ids[i] = sl.ID
+	}
+
+	// create the filter, make sure to specify currently unblocked skylinks
+	filter := bson.M{
+		"_id":    bson.M{"$in": ids},
+		"failed": bson.M{"$eq": true},
+	}
+
+	// define the update
+	update := bson.M{
+		"$set": bson.M{
+			"failed": false,
+		},
+	}
+
+	// perform the update
+	collSkylinks := db.staticDB.Collection(dbSkylinks)
+	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	return err
+}
+
+// MarkAsFailed will mark the given documents as failed
+func (db *DB) MarkAsFailed(skylinks []BlockedSkylink) error {
+	// extract all ids
+	ids := make([]primitive.ObjectID, len(skylinks))
+	for i, sl := range skylinks {
+		ids[i] = sl.ID
+	}
+
+	// create the filter, make sure to specify currently unblocked skylinks
+	filter := bson.M{
+		"_id":    bson.M{"$in": ids},
+		"failed": bson.M{"$ne": true},
+	}
+
+	// define the update
+	update := bson.M{
+		"$set": bson.M{
+			"failed": true,
+		},
+	}
+
+	// perform the update
+	collSkylinks := db.staticDB.Collection(dbSkylinks)
+	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	return err
+}
+
 // BlockedSkylinkSave saves the given BlockedSkylink record to the database.
 // NOTE: commented out since this method isn't used or tested.
 //func (db *DB) BlockedSkylinkSave(ctx context.Context, skylink *BlockedSkylink) error {
@@ -187,19 +243,49 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	cutoff = cutoff.Add(-time.Hour)
 	db.staticLogger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
 
-	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff}}
+	filter := bson.M{
+		"timestamp_added": bson.M{"$gt": cutoff},
+		"failed":          bson.M{"$ne": true},
+	}
 	opts := options.Find()
 	opts.SetSort(bson.D{{"timestamp_added", 1}})
 	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
-	if err != nil {
+	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
+		return nil, nil
+	} else if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
 	}
+
 	list := make([]BlockedSkylink, 0)
 	err = c.All(db.ctx, &list)
 	if err != nil {
 		return nil, err
 	}
+
 	db.staticLogger.Tracef("SkylinksToBlock: returning list %v", list)
+	return list, nil
+}
+
+// SkylinksToRetry returns all skylinks that failed to get blocked the first
+// time around. This is a retry mechanism to ensure we keep retrying to block
+// those skylinks, but at the same try 'unblock' the main block loop in order
+// for it to run smoothly.
+func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
+	filter := bson.M{"failed": bson.M{"$eq": true}}
+	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter)
+	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
+	}
+
+	list := make([]BlockedSkylink, 0)
+	err = c.All(db.ctx, &list)
+	if err != nil {
+		return nil, err
+	}
+
+	db.staticLogger.Tracef("SkylinksToRetry: returning list %v", list)
 	return list, nil
 }
 
@@ -263,6 +349,10 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			{
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
+			},
+			{
+				Keys:    bson.D{{"failed", 1}},
+				Options: options.Index().SetName("failed"),
 			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
