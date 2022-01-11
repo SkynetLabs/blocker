@@ -133,8 +133,8 @@ func (db *DB) BlockedSkylink(ctx context.Context, s string) (*BlockedSkylink, er
 	return &sl, nil
 }
 
-// CreateBlockedSkylink creates a new skylink. If the skylink already exists it does
-// nothing.
+// CreateBlockedSkylink creates a new skylink. If the skylink already exists it
+// does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
 	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
@@ -217,8 +217,6 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	db.staticLogger.Tracef("SkylinksToBlock: returning list %v", list)
 	return list, nil
 }
 
@@ -240,8 +238,6 @@ func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
 	if err != nil {
 		return nil, err
 	}
-
-	db.staticLogger.Tracef("SkylinksToRetry: returning list %v", list)
 	return list, nil
 }
 
