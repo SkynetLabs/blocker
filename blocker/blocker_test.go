@@ -16,7 +16,7 @@ import (
 )
 
 // mockSkyd is a helper struct that implements the skyd API, all methods are
-// essentially a no-op except for 'BlockSkysslinks' which keeps track of the
+// essentially a no-op except for 'BlockSkylinks' which keeps track of the
 // arguments with which it is called
 type mockSkyd struct {
 	BlockSkylinksReqs [][]string
@@ -47,6 +47,9 @@ func (api *mockSkyd) ResolveSkylink(skylink string) (string, error) {
 
 // TestBlocker runs the blocker unit tests
 func TestBlocker(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+	}
 	t.Parallel()
 
 	tests := []struct {
@@ -75,7 +78,11 @@ func testBlockSkylinks(t *testing.T) {
 	}
 
 	// defer a db close
-	defer blocker.staticDB.Close()
+	defer func() {
+		if err := blocker.staticDB.Close(); err != nil {
+			t.Error(err)
+		}
+	}()
 
 	ts := time.Now().UTC()
 	ts = ts.Truncate(time.Second)

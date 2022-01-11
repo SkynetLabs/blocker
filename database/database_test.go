@@ -41,6 +41,9 @@ func newTestDB(ctx context.Context, dbName string) *DB {
 
 // TestDatabase runs the database unit tests.
 func TestDatabase(t *testing.T) {
+	if testing.Short() {
+		t.SkipNow()
+	}
 	t.Parallel()
 
 	tests := []struct {

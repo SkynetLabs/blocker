@@ -163,56 +163,12 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 // MarkAsSucceeded will toggle the failed flag for all documents in the given
 // list of skylinks that are currently marked as failed.
 func (db *DB) MarkAsSucceeded(skylinks []BlockedSkylink) error {
-	// extract all ids
-	ids := make([]primitive.ObjectID, len(skylinks))
-	for i, sl := range skylinks {
-		ids[i] = sl.ID
-	}
-
-	// create the filter, make sure to specify currently unblocked skylinks
-	filter := bson.M{
-		"_id":    bson.M{"$in": ids},
-		"failed": bson.M{"$eq": true},
-	}
-
-	// define the update
-	update := bson.M{
-		"$set": bson.M{
-			"failed": false,
-		},
-	}
-
-	// perform the update
-	collSkylinks := db.staticDB.Collection(dbSkylinks)
-	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
-	return err
+	return db.updateFailedFlag(skylinks, false)
 }
 
 // MarkAsFailed will mark the given documents as failed
 func (db *DB) MarkAsFailed(skylinks []BlockedSkylink) error {
-	// extract all ids
-	ids := make([]primitive.ObjectID, len(skylinks))
-	for i, sl := range skylinks {
-		ids[i] = sl.ID
-	}
-
-	// create the filter, make sure to specify currently unblocked skylinks
-	filter := bson.M{
-		"_id":    bson.M{"$in": ids},
-		"failed": bson.M{"$ne": true},
-	}
-
-	// define the update
-	update := bson.M{
-		"$set": bson.M{
-			"failed": true,
-		},
-	}
-
-	// perform the update
-	collSkylinks := db.staticDB.Collection(dbSkylinks)
-	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
-	return err
+	return db.updateFailedFlag(skylinks, true)
 }
 
 // BlockedSkylinkSave saves the given BlockedSkylink record to the database.
@@ -325,6 +281,34 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 		return ErrNoEntriesUpdated
 	}
 	return nil
+}
+
+// updateFailedFlag is a helper method that updates the failed flag on the
+// documents that correspond with the skylinks in the given array.
+func (db *DB) updateFailedFlag(skylinks []BlockedSkylink, failed bool) error {
+	// extract all ids
+	ids := make([]primitive.ObjectID, len(skylinks))
+	for i, sl := range skylinks {
+		ids[i] = sl.ID
+	}
+
+	// create the filter, make sure to specify currently unblocked skylinks
+	filter := bson.M{
+		"_id":    bson.M{"$in": ids},
+		"failed": bson.M{"$eq": !failed},
+	}
+
+	// define the update
+	update := bson.M{
+		"$set": bson.M{
+			"failed": failed,
+		},
+	}
+
+	// perform the update
+	collSkylinks := db.staticDB.Collection(dbSkylinks)
+	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	return err
 }
 
 // ensureDBSchema checks that we have all collections and indexes we need and

@@ -17,6 +17,10 @@ const (
 	// simultaneously.
 	blockBatchSize = 100
 
+	// blockBatchSizeDivisor is the divisor applied to the batch size when an
+	// error is encountered.
+	blockBatchSizeDivisor = 10
+
 	// unableToUpdateBlocklistErrStr is a substring of the error returned by
 	// skyd if the blocklist was unable to get updated
 	unableToUpdateBlocklistErrStr = "unable to update the skynet blocklist"
@@ -273,7 +277,7 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		// simply decrease the batch size and continue
 		if err != nil && batchSize > 1 {
 			bl.staticLogger.Tracef("Error occurred while blocking skylinks retrying with batch size %v, err: %v, retrying with smaller batch size...", batchSize, err)
-			batchSize /= 10
+			batchSize /= blockBatchSizeDivisor
 			continue
 		}
 
