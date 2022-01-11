@@ -62,7 +62,8 @@ func New(ctx context.Context, uri string, creds options.Credential, logger *logr
 	return NewCustomDB(ctx, uri, dbName, creds, logger)
 }
 
-// NewCustomDB creates a new database connection to a database with a custom name.
+// NewCustomDB creates a new database connection to a database with a custom
+// name.
 func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.Credential, logger *logrus.Logger) (*DB, error) {
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
