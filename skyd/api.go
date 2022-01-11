@@ -102,9 +102,7 @@ func (api *api) BlockSkylinks(sls []string) error {
 			api.staticLogger.Warn(errors.AddContext(err, "failed to parse response body after a failed call to skyd").Error())
 			respBody = []byte{}
 		}
-		err = errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
-		api.staticLogger.Warn(err.Error())
-		return err
+		return errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
 	}
 	return nil
 }
