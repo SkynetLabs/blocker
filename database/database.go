@@ -218,7 +218,6 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 		return nil, err
 	}
 
-	db.staticLogger.Tracef("SkylinksToBlock: returning list %v", list)
 	return list, nil
 }
 
@@ -241,7 +240,6 @@ func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
 		return nil, err
 	}
 
-	db.staticLogger.Tracef("SkylinksToRetry: returning list %v", list)
 	return list, nil
 }
 

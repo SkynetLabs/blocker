@@ -107,11 +107,11 @@ func (bl *Blocker) RetryFailedSkylinks() error {
 		return nil
 	}
 
-	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", skylinks)
+	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", skylinksToString(skylinks))
 
 	// Retry the skylinks
 	blocked, failed, err := bl.blockSkylinks(skylinks)
-	if err != nil {
+	if err != nil && !strings.Contains(err.Error(), unableToUpdateBlocklistErrStr) {
 		bl.staticLogger.Errorf("Failed to retry skylinks: %s", err)
 		return err
 	}
@@ -139,7 +139,7 @@ func (bl *Blocker) SweepAndBlock() error {
 		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
 	}
 
-	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinks)
+	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToString(skylinks))
 
 	// Block the skylinks
 	blocked, failed, err := bl.blockSkylinks(skylinks)
@@ -309,4 +309,14 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		start = end
 	}
 	return
+}
+
+// skylinksToString returns an array of skylinks as strings for the given
+// blocked skylinks array.
+func skylinksToString(skylinks []database.BlockedSkylink) []string {
+	sls := make([]string, len(skylinks))
+	for i, sl := range skylinks {
+		sls[i] = sl.Skylink
+	}
+	return sls
 }
