@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"testing"
-	"time"
 
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/SkynetLabs/blocker/skyd"
@@ -83,9 +82,6 @@ func testBlockSkylinks(t *testing.T) {
 		}
 	}()
 
-	ts := time.Now().UTC()
-	ts = ts.Truncate(time.Second)
-
 	// create a list of 16 skylinks, where the 10th skylink is one that triggers
 	// an error to be thrown in skyd, this will ensure the blocker tries:
 	// - all skylinks in 1 batch
@@ -94,17 +90,14 @@ func testBlockSkylinks(t *testing.T) {
 	var skylinks []database.BlockedSkylink
 	var i int
 	for ; i < 9; i++ {
-		ts = ts.Add(time.Minute)
-		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i), TimestampAdded: ts})
+		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i)})
 	}
 
 	// the last skylink before the failure should be the latest timestamp set,
 	// so save this timestamp as an expected value for later
-	expectedLatest := ts
 	skylinks = append(skylinks, database.BlockedSkylink{Skylink: "throwerror"})
 	for ; i < 15; i++ {
-		ts = ts.Add(time.Minute)
-		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i), TimestampAdded: ts})
+		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i)})
 	}
 
 	blocked, failed, err := blocker.blockSkylinks(skylinks)
@@ -133,16 +126,6 @@ func testBlockSkylinks(t *testing.T) {
 		if len(api.BlockSkylinksReqs[r]) != 1 {
 			t.Fatalf("unexpected batch size for req %d, %v != 1", r, len(api.BlockSkylinksReqs[r]))
 		}
-	}
-
-	// assert the latest block timestamp has been set to the timestamp of the
-	// last succeeding skylink before the failure
-	latest, err := blocker.staticDB.LatestBlockTimestamp()
-	if err != nil {
-		t.Fatal("failed to fetch latest block timestamp", err)
-	}
-	if latest != expectedLatest {
-		t.Fatalf("latest block timestamp not updated to last succeeding skylink timestamp added, %v != %v", latest, expectedLatest)
 	}
 }
 

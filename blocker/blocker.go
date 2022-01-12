@@ -118,6 +118,9 @@ func (bl *Blocker) RetryFailedSkylinks() error {
 
 	bl.staticLogger.Tracef("RetryFailedSkylinks blocked %v skylinks, and had %v failures", blocked, failed)
 
+	// NOTE: we purposefully do not update the latest block timestamp in the
+	// retry loop
+
 	return nil
 }
 
@@ -301,15 +304,6 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		// array of blocked skylinks
 		if err == nil {
 			blocked = append(blocked, skylinks[start:end]...)
-		}
-
-		// if no error has occurred yet, update the latest block timestamp
-		if len(failed) == 0 {
-			latest := skylinks[end-1]
-			err = bl.staticDB.SetLatestBlockTimestamp(latest.TimestampAdded)
-			if err != nil && err != database.ErrNoEntriesUpdated {
-				bl.staticLogger.Tracef("blockSkylinks failed to update timestamp: %s", err.Error())
-			}
 		}
 
 		// update start

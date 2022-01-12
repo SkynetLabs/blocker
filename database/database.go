@@ -227,7 +227,9 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 // for it to run smoothly.
 func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
 	filter := bson.M{"failed": bson.M{"$eq": true}}
-	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter)
+	opts := options.Find()
+	opts.SetSort(bson.D{{"timestamp_added", -1}})
+	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
 	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
 		return nil, nil
 	} else if err != nil {
