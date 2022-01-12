@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io/ioutil"
-	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +28,7 @@ func (api *mockSkyd) BlockSkylinks(skylinks []string) error {
 	// check whether the caller expects an error to be thrown
 	for _, sl := range skylinks {
 		if sl == "throwerror" {
-			return errors.New("error")
+			return errors.New(unableToUpdateBlocklistErrStr)
 		}
 	}
 	return nil
@@ -109,8 +108,8 @@ func testBlockSkylinks(t *testing.T) {
 	}
 
 	blocked, failed, err := blocker.blockSkylinks(skylinks)
-	if err == nil {
-		t.Fatal("expected error to be thrown")
+	if err != nil {
+		t.Fatal("unexpected error thrown", err)
 	}
 	// assert blocked and failed are returned correctly
 	if blocked != 15 {
@@ -118,10 +117,6 @@ func testBlockSkylinks(t *testing.T) {
 	}
 	if failed != 1 {
 		t.Fatalf("unexpected return values for failed, %v != 1", failed)
-	}
-	// assert the error contains the skylink that failed
-	if !strings.Contains(err.Error(), "failed blocking skylink 'throwerror'") {
-		t.Fatal("unexpected error thrown")
 	}
 
 	// assert 18 requests in total happen to skyd, batch size 100, 10 and 1
