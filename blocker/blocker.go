@@ -251,6 +251,13 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		default:
 		}
 
+		// batchSize shouldn't ever be 0, but if it is zero we might get stuck
+		// in an endless loop, therefor we add this check here and break to
+		// ensure that never happens
+		if batchSize == 0 {
+			break
+		}
+
 		// calculate the end of the batch range
 		end := start + batchSize
 		if end > len(skylinks) {
