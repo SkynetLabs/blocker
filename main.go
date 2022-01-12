@@ -34,24 +34,6 @@ const (
 	// defaultNginxPort is where we connect to nginx unless overwritten by
 	// "NGINX_PORT" environment variables.
 	defaultNginxPort = 8000
-
-	// defaultNginxCachePurgerListPath is the path at which we can find the list where
-	// we want to add the skylinks which we want purged from nginx's cache.
-	//
-	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LIST
-	// environment variable, however it is important that this path matches the
-	// path in the nginx purge script that is part of the cron.
-	defaultNginxCachePurgerListPath = "/data/nginx/blocker/skylinks.txt"
-
-	// defaultNginxCachePurgeLockPath is the path to the lock directory. The blocker
-	// acquires this lock before writing to the list file, essentially ensuring
-	// the purge script does not alter the file while the blocker API is writing
-	// to it.
-	//
-	// NOTE: this value can be configured via the BLOCKER_NGINX_CACHE_PURGE_LOCK
-	// environment variable, however it is important that this path matches the
-	// path in the nginx purge script that is part of the cron.
-	defaultNginxCachePurgeLockPath = "/data/nginx/blocker/lock"
 )
 
 // loadDBCredentials creates a new db connection based on credentials found in
@@ -147,18 +129,8 @@ func main() {
 		api.AccountsPort = aPort
 	}
 
-	// Initialise and start the background scanner task.
-	nginxCachePurgerListPath := defaultNginxCachePurgerListPath
-	if nginxList := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LIST"); nginxList != "" {
-		nginxCachePurgerListPath = nginxList
-	}
-	nginxCachePurgeLockPath := defaultNginxCachePurgeLockPath
-	if nginxLock := os.Getenv("BLOCKER_NGINX_CACHE_PURGE_LOCK"); nginxLock != "" {
-		nginxCachePurgeLockPath = nginxLock
-	}
-
 	// Create a skyd API.
-	skydAPI, err := skyd.NewSkydAPI(nginxHost, nginxPort, skydHost, skydAPIPassword, skydPort, db, logger)
+	skydAPI, err := skyd.NewAPI(nginxHost, nginxPort, skydHost, skydAPIPassword, skydPort, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
 	}
@@ -167,7 +139,7 @@ func main() {
 	}
 
 	// Create the blocker.
-	blockerThread, err := blocker.New(ctx, skydAPI, db, logger, nginxCachePurgerListPath, nginxCachePurgeLockPath)
+	blockerThread, err := blocker.New(ctx, skydAPI, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}

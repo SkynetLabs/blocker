@@ -123,7 +123,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	sub := hex.EncodeToString(body.PoW.MySkyID[:])
 
 	// Check whether the skylink is on the allow list
-	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
+	if api.isAllowListed(r.Context(), string(body.Skylink)) {
 		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
@@ -167,7 +167,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	}
 
 	// Check whether the skylink is on the allow list
-	if api.staticSkydAPI.IsAllowListed(r.Context(), string(body.Skylink)) {
+	if api.isAllowListed(r.Context(), string(body.Skylink)) {
 		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
@@ -206,6 +206,23 @@ func (api *API) block(ctx context.Context, bp BlockPOST, sub string, unauthentic
 	}
 	api.staticLogger.Debugf("Added skylink %s", skylink.Skylink)
 	return nil
+}
+
+// isAllowListed returns true if the given skylink is on the allow list
+func (api *API) isAllowListed(ctx context.Context, skylink string) bool {
+	// try and resolve the skylink
+	skylink, err := api.staticSkydAPI.ResolveSkylink(skylink)
+	if err != nil {
+		api.staticLogger.Error("failed to resolve skylink", err)
+	}
+
+	// check whether the skylink is allow listed
+	allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink)
+	if err != nil {
+		api.staticLogger.Error("failed to verify skylink against the allow list", err)
+		return false
+	}
+	return allowlisted
 }
 
 // extractSkylinkHash extracts the skylink hash from the given skylink that

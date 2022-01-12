@@ -2,8 +2,6 @@ package blocker
 
 import (
 	"context"
-	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,12 +13,32 @@ import (
 )
 
 const (
-	// skylinksChunk is the max number of skylinks to be sent for blocking
+	// blockBatchSize is the max number of skylinks to be sent for blocking
 	// simultaneously.
-	skylinksChunk = 100
+	blockBatchSize = 100
+
+	// blockBatchSizeDivisor is the divisor applied to the batch size when an
+	// error is encountered.
+	blockBatchSizeDivisor = 10
+
+	// unableToUpdateBlocklistErrStr is a substring of the error returned by
+	// skyd if the blocklist was unable to get updated
+	unableToUpdateBlocklistErrStr = "unable to update the skynet blocklist"
 )
 
 var (
+	// retryInterval defines the amount of time between retries of blocked
+	// skylinks that failed to get blocked the first time around. This interval
+	// is (a lot) higher than the interval with which we scan for skylinks to
+	// get blocked.
+	retryInterval = build.Select(
+		build.Var{
+			Dev:      time.Minute,
+			Testing:  time.Second,
+			Standard: 4 * time.Hour,
+		},
+	).(time.Duration)
+
 	// sleepBetweenScans defines how long the scanner should sleep after
 	// scanning the DB and not finding any skylinks to scan.
 	sleepBetweenScans = build.Select(
@@ -46,17 +64,14 @@ var (
 // Blocker scans the database for skylinks that should be blocked and calls
 // skyd to block them.
 type Blocker struct {
-	staticNginxCachePurgerListPath string
-	staticNginxCachePurgeLockPath  string
-
 	staticCtx     context.Context
 	staticDB      *database.DB
 	staticLogger  *logrus.Logger
-	staticSkydAPI *skyd.SkydAPI
+	staticSkydAPI skyd.API
 }
 
 // New returns a new Blocker with the given parameters.
-func New(ctx context.Context, skydAPI *skyd.SkydAPI, db *database.DB, logger *logrus.Logger, nginxCachePurgerListPath, nginxCachePurgeLockPath string) (*Blocker, error) {
+func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
 	}
@@ -70,15 +85,43 @@ func New(ctx context.Context, skydAPI *skyd.SkydAPI, db *database.DB, logger *lo
 		return nil, errors.New("invalid Skyd API provided")
 	}
 	bl := &Blocker{
-		staticNginxCachePurgerListPath: nginxCachePurgerListPath,
-		staticNginxCachePurgeLockPath:  nginxCachePurgeLockPath,
-
 		staticCtx:     ctx,
 		staticDB:      db,
 		staticLogger:  logger,
 		staticSkydAPI: skydAPI,
 	}
 	return bl, nil
+}
+
+// RetryFailedSkylinks fetches all blocked skylinks that failed to get blocked
+// the first time and retries them.
+func (bl *Blocker) RetryFailedSkylinks() error {
+	// Fetch skylinks to retry
+	skylinks, err := bl.staticDB.SkylinksToRetry()
+	if err != nil {
+		return err
+	}
+
+	// Escape early if there are none
+	if len(skylinks) == 0 {
+		return nil
+	}
+
+	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", skylinksToString(skylinks))
+
+	// Retry the skylinks
+	blocked, failed, err := bl.blockSkylinks(skylinks)
+	if err != nil && !strings.Contains(err.Error(), unableToUpdateBlocklistErrStr) {
+		bl.staticLogger.Errorf("Failed to retry skylinks: %s", err)
+		return err
+	}
+
+	bl.staticLogger.Tracef("RetryFailedSkylinks blocked %v skylinks, and had %v failures", blocked, failed)
+
+	// NOTE: we purposefully do not update the latest block timestamp in the
+	// retry loop
+
+	return nil
 }
 
 // SweepAndBlock sweeps the DB for new skylinks, blocks them in skyd and writes
@@ -88,64 +131,31 @@ func New(ctx context.Context, skydAPI *skyd.SkydAPI, db *database.DB, logger *lo
 // Note: It actually always scans one hour before the last timestamp in order to
 // avoid issues caused by clock desyncs.
 func (bl *Blocker) SweepAndBlock() error {
-	skylinksToBlock, err := bl.staticDB.SkylinksToBlock()
-	if errors.Contains(err, database.ErrNoDocumentsFound) {
-		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
-	}
+	// Fetch skylinks to block, return early if there are none
+	skylinks, err := bl.staticDB.SkylinksToBlock()
 	if err != nil {
 		return err
 	}
-	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToBlock)
-	// Sort the skylinks in order of appearance.
-	sort.Slice(skylinksToBlock, func(i, j int) bool {
-		return skylinksToBlock[i].TimestampAdded.Before(skylinksToBlock[j].TimestampAdded)
-	})
 
-	// Break the list into chunks of size SkylinksChunk and block them.
-	for idx := 0; idx < len(skylinksToBlock); idx += skylinksChunk {
-		end := idx + skylinksChunk
-		if end > len(skylinksToBlock) {
-			end = len(skylinksToBlock)
-		}
-		chunk := skylinksToBlock[idx:end]
-		bl.staticLogger.Tracef("SweepAndBlock will block chunk: %+v", chunk)
-		block := make([]string, 0, len(chunk))
-		var latestTimestamp time.Time
-
-		for _, sl := range chunk {
-			select {
-			case <-bl.staticCtx.Done():
-				return nil
-			default:
-			}
-
-			if sl.Skylink == "" {
-				bl.staticLogger.Warnf("SkylinksToBlock returned a record with an empty skylink. Record: %+v", sl)
-				continue // TODO Should we `return` here?
-			}
-			if sl.TimestampAdded.After(latestTimestamp) {
-				latestTimestamp = sl.TimestampAdded
-			}
-			block = append(block, sl.Skylink)
-		}
-		// Block the collected skylinks.
-		err = bl.blockSkylinks(block)
-		if err != nil && !strings.Contains(err.Error(), "no entries updated") {
-			err = errors.AddContext(err, "failed to block skylinks list")
-			bl.staticLogger.Tracef("SweepAndBlock failed to block with error %s", err.Error())
-			return err
-		}
-		err = bl.staticDB.SetLatestBlockTimestamp(latestTimestamp)
-		if err != nil && !strings.Contains(err.Error(), "no entries updated") {
-			bl.staticLogger.Tracef("SweepAndBlock failed to update timestamp: %s", err.Error())
-			return err
-		}
+	// Escape early if there are none
+	if len(skylinks) == 0 {
+		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
 	}
 
-	// After we loop over all outstanding skylinks to block, we set the time of
-	// the last scan to the current moment.
+	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToString(skylinks))
+
+	// Block the skylinks
+	blocked, failed, err := bl.blockSkylinks(skylinks)
+	if err != nil {
+		bl.staticLogger.Errorf("Failed to block skylinks: %s", err)
+		return err
+	}
+
+	bl.staticLogger.Tracef("SweepAndBlock blocked %v skylinks, and had %v failures", blocked, failed)
+
+	// Update the latest block timestamp
 	err = bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
-	if err != nil && !strings.Contains(err.Error(), "no entries updated") {
+	if err != nil && err != database.ErrNoEntriesUpdated {
 		bl.staticLogger.Tracef("SweepAndBlock failed to update timestamp: %s", err.Error())
 		return err
 	}
@@ -198,74 +208,116 @@ func (bl *Blocker) Start() {
 			}
 		}
 	}()
-}
 
-// blockSkylinks calls skyd and instructs it to block the given list of
-// skylinks.
-func (bl *Blocker) blockSkylinks(sls []string) error {
-	err := bl.writeToNginxCachePurger(sls)
-	if err != nil {
-		bl.staticLogger.Warnf("Failed to write to nginx cache purger's list: %s", err)
-	}
-
-	err = bl.staticSkydAPI.BlockSkylinks(sls)
-	if err != nil {
-		return errors.AddContext(err, "block skylinks failed")
-	}
-	return nil
-}
-
-// writeToNginxCachePurger appends all given skylinks to the file at path
-// NginxCachePurgerListPath from where another process will purge them from
-// nginx's cache.
-func (bl *Blocker) writeToNginxCachePurger(sls []string) error {
-	// acquire a lock on the nginx cache list
-	//
-	// NOTE: we use a directory as lock file because this allows for an atomic
-	// mkdir operation in the bash script that purges the skylinks in the list
-	err := func() error {
-		var lockErr error
-		// we only attempt this 3 times with a 1s sleep in between, this should
-		// not fail seeing as Nginx only moves the file
-		for i := 0; i < 3; i++ {
-			lockErr = os.Mkdir(bl.staticNginxCachePurgeLockPath, 0700)
-			if lockErr == nil {
-				break
+	// Start the retry loop.
+	go func() {
+		for {
+			select {
+			case <-bl.staticCtx.Done():
+				return
+			case <-time.After(retryInterval):
 			}
-			bl.staticLogger.Warnf("failed to acquire nginx lock")
-			time.Sleep(time.Second)
+			err := bl.RetryFailedSkylinks()
+			if err != nil {
+				bl.staticLogger.Debugf("RetryFailedSkylinks error: %s", err.Error())
+				continue
+			}
+			bl.staticLogger.Debugf("RetryFailedSkylinks ran successfully.")
 		}
-		return lockErr
 	}()
-	if err != nil {
-		return errors.AddContext(err, "failed to acquire nginx lock")
-	}
+}
 
-	// defer a function that releases the lock
+// blockSkylinks blocks the given list of skylinks.
+func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded int, failures int, err error) {
+	batchSize := blockBatchSize
+	start := 0
+
+	// keep track of which skylinks were blocked and which ones failed
+	var blocked []database.BlockedSkylink
+	var failed []database.BlockedSkylink
+
+	// defer a function that updates the database and sets return values
 	defer func() {
-		err := os.Remove(bl.staticNginxCachePurgeLockPath)
-		if err != nil {
-			bl.staticLogger.Errorf("failed to release nginx lock, err %v", err)
-		}
+		bErr := bl.staticDB.MarkAsSucceeded(blocked)
+		fErr := bl.staticDB.MarkAsFailed(failed)
+
+		err = errors.Compose(err, bErr, fErr)
+		succeeded = len(blocked)
+		failures = len(failed)
 	}()
 
-	// open the nginx cache list file
-	f, err := os.OpenFile(bl.staticNginxCachePurgerListPath, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		e1 := f.Sync()
-		e2 := f.Close()
-		if e1 != nil || e2 != nil {
-			bl.staticLogger.Warnf("Failed to sync and close nginx cache purger list: %s", errors.Compose(e1, e2).Error())
+	for start < len(skylinks) {
+		// check whether we need to escape
+		select {
+		case <-bl.staticCtx.Done():
+			return
+		default:
 		}
-	}()
-	for _, s := range sls {
-		_, err = f.WriteString(s + "\n")
+
+		// batchSize shouldn't ever be 0, but if it is zero we might get stuck
+		// in an endless loop, therefor we add this check here and break to
+		// ensure that never happens
+		if batchSize == 0 {
+			break
+		}
+
+		// calculate the end of the batch range
+		end := start + batchSize
+		if end > len(skylinks) {
+			end = len(skylinks)
+		}
+
+		// grab all skylinks for this batch
+		batch := make([]string, end-start)
+		for i, sl := range skylinks[start:end] {
+			batch[i] = sl.Skylink
+		}
+
+		// send the batch to skyd, if an error occurs and the current batch size
+		// is greater than one, we simply retry with a smaller batch size
+		err = bl.staticSkydAPI.BlockSkylinks(batch)
+
+		// if there's an error, and it's unrelated to the batch we sent, e.g.
+		// connection issue or something, we return here
+		if err != nil && !strings.Contains(err.Error(), unableToUpdateBlocklistErrStr) {
+			return
+		}
+
+		// otherwise if there's an error and the batchsize is larger than 1, we
+		// simply decrease the batch size and continue
+		if err != nil && batchSize > 1 {
+			bl.staticLogger.Tracef("Error occurred while blocking skylinks retrying with batch size %v, err: %v, retrying with smaller batch size...", batchSize, err)
+			batchSize /= blockBatchSizeDivisor
+			continue
+		}
+
+		// if an error occurs add it to the failed array
 		if err != nil {
-			return err
+			if len(batch) == 1 {
+				failed = append(failed, skylinks[start])
+			} else {
+				bl.staticLogger.Errorf("Critical Developer Error, this code should only execute if the length of the batch equals one")
+			}
 		}
+
+		// if no error occurred, add all skylinks from the batch to the
+		// array of blocked skylinks
+		if err == nil {
+			blocked = append(blocked, skylinks[start:end]...)
+		}
+
+		// update start
+		start = end
 	}
-	return nil
+	return
+}
+
+// skylinksToString returns an array of skylinks as strings for the given
+// blocked skylinks array.
+func skylinksToString(skylinks []database.BlockedSkylink) []string {
+	sls := make([]string, len(skylinks))
+	for i, sl := range skylinks {
+		sls[i] = sl.Skylink
+	}
+	return sls
 }

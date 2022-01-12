@@ -8,6 +8,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -18,6 +19,11 @@ var (
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
 	ErrNoDocumentsFound = errors.New("no documents")
+
+	// ErrNoEntriesUpdated is returned when no entries were updated after an
+	// update was performed.
+	ErrNoEntriesUpdated = errors.New("no entries updated")
+
 	// ErrSkylinkExists is returned when we try to add a skylink to the database
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
@@ -56,7 +62,8 @@ func New(ctx context.Context, uri string, creds options.Credential, logger *logr
 	return NewCustomDB(ctx, uri, dbName, creds, logger)
 }
 
-// NewCustomDB creates a new database connection to a database with a custom name.
+// NewCustomDB creates a new database connection to a database with a custom
+// name.
 func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.Credential, logger *logrus.Logger) (*DB, error) {
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
@@ -127,8 +134,8 @@ func (db *DB) BlockedSkylink(ctx context.Context, s string) (*BlockedSkylink, er
 	return &sl, nil
 }
 
-// CreateBlockedSkylink creates a new skylink. If the skylink already exists it does
-// nothing.
+// CreateBlockedSkylink creates a new skylink. If the skylink already exists it
+// does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
 	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
@@ -152,6 +159,17 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 		return false, res.Err()
 	}
 	return true, nil
+}
+
+// MarkAsSucceeded will toggle the failed flag for all documents in the given
+// list of skylinks that are currently marked as failed.
+func (db *DB) MarkAsSucceeded(skylinks []BlockedSkylink) error {
+	return db.updateFailedFlag(skylinks, false)
+}
+
+// MarkAsFailed will mark the given documents as failed
+func (db *DB) MarkAsFailed(skylinks []BlockedSkylink) error {
+	return db.updateFailedFlag(skylinks, true)
 }
 
 // BlockedSkylinkSave saves the given BlockedSkylink record to the database.
@@ -182,17 +200,47 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	cutoff = cutoff.Add(-time.Hour)
 	db.staticLogger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
 
-	filter := bson.M{"timestamp_added": bson.M{"$gt": cutoff}}
-	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter)
-	if err != nil {
+	filter := bson.M{
+		"timestamp_added": bson.M{"$gt": cutoff},
+		"failed":          bson.M{"$ne": true},
+	}
+	opts := options.Find()
+	opts.SetSort(bson.D{{"timestamp_added", 1}})
+	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
+	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
+		return nil, nil
+	} else if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
 	}
+
 	list := make([]BlockedSkylink, 0)
 	err = c.All(db.ctx, &list)
 	if err != nil {
 		return nil, err
 	}
-	db.staticLogger.Tracef("SkylinksToBlock: returning list %v", list)
+	return list, nil
+}
+
+// SkylinksToRetry returns all skylinks that failed to get blocked the first
+// time around. This is a retry mechanism to ensure we keep retrying to block
+// those skylinks, but at the same try 'unblock' the main block loop in order
+// for it to run smoothly.
+func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
+	filter := bson.M{"failed": bson.M{"$eq": true}}
+	opts := options.Find()
+	opts.SetSort(bson.D{{"timestamp_added", 1}})
+	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
+	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
+	}
+
+	list := make([]BlockedSkylink, 0)
+	err = c.All(db.ctx, &list)
+	if err != nil {
+		return nil, err
+	}
 	return list, nil
 }
 
@@ -229,9 +277,37 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 		return errors.AddContext(err, "failed to update")
 	}
 	if ur.ModifiedCount+ur.UpsertedCount == 0 {
-		return errors.New("no entries updated")
+		return ErrNoEntriesUpdated
 	}
 	return nil
+}
+
+// updateFailedFlag is a helper method that updates the failed flag on the
+// documents that correspond with the skylinks in the given array.
+func (db *DB) updateFailedFlag(skylinks []BlockedSkylink, failed bool) error {
+	// extract all ids
+	ids := make([]primitive.ObjectID, len(skylinks))
+	for i, sl := range skylinks {
+		ids[i] = sl.ID
+	}
+
+	// create the filter, make sure to specify currently unblocked skylinks
+	filter := bson.M{
+		"_id":    bson.M{"$in": ids},
+		"failed": bson.M{"$eq": !failed},
+	}
+
+	// define the update
+	update := bson.M{
+		"$set": bson.M{
+			"failed": failed,
+		},
+	}
+
+	// perform the update
+	collSkylinks := db.staticDB.Collection(dbSkylinks)
+	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	return err
 }
 
 // ensureDBSchema checks that we have all collections and indexes we need and
@@ -256,6 +332,10 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			{
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
+			},
+			{
+				Keys:    bson.D{{"failed", 1}},
+				Options: options.Index().SetName("failed"),
 			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},

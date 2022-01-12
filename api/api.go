@@ -16,11 +16,11 @@ type API struct {
 	staticDB      *database.DB
 	staticLogger  *logrus.Logger
 	staticRouter  *httprouter.Router
-	staticSkydAPI *skyd.SkydAPI
+	staticSkydAPI skyd.API
 }
 
 // New creates a new API instance.
-func New(skydAPI *skyd.SkydAPI, db *database.DB, logger *logrus.Logger) (*API, error) {
+func New(skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*API, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
