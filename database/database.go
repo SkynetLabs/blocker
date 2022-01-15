@@ -16,7 +16,7 @@ import (
 )
 
 var (
-	// ErrIndexCreateFailed is returned when an error occurred whilst trying to
+	// ErrIndexCreateFailed is returned when an error occurred when trying to
 	// ensure an index
 	ErrIndexCreateFailed = errors.New("failed to create index")
 
@@ -102,9 +102,10 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	db := c.Database(dbName)
 	err = ensureDBSchema(dbCtx, db, logger)
 	if err != nil && errors.Contains(err, ErrIndexCreateFailed) {
-		// Do not fail here if we could not ensure the existence of an index. It
-		// should definitely be looked into, but this is no reason to prevent
-		// the blocker from running.
+		// We do not error out if we failed to ensure the existence of an index.
+		// It is definitely an issue that should be looked into, which is why we
+		// tag it as [CRITICAL], but seeing as the blocker will work the same
+		// without the index it's no reason to prevent it from running.
 		logger.Errorf(`[CRITICAL] failed to ensure DB schema, err: %v`, err)
 	} else if err != nil {
 		return nil, err
