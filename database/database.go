@@ -77,7 +77,7 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	}
 
 	// Define a new context with a timeout to handle the database setup.
-	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	dbCtx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 
 	// Prepare the options for connecting to the db.
