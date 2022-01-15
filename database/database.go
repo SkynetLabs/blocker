@@ -350,18 +350,18 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 		},
 	}
 
-	for collName, models := range schema {
-		coll, err := ensureCollection(ctx, db, collName)
+	for collName := range schema {
+		_, err := ensureCollection(ctx, db, collName)
 		if err != nil {
 			return err
 		}
-		iv := coll.Indexes()
-		var names []string
-		names, err = iv.CreateMany(ctx, models)
-		if err != nil {
-			return errors.AddContext(err, "failed to create indexes")
-		}
-		log.Debugf("Ensured index exists: %v", names)
+		// iv := coll.Indexes()
+		// var names []string
+		// names, err = iv.CreateMany(ctx, models)
+		// if err != nil {
+		// 	return errors.AddContext(err, "failed to create indexes")
+		// }
+		// log.Debugf("Ensured index exists: %v", names)
 	}
 	return nil
 }
