@@ -16,6 +16,10 @@ import (
 )
 
 var (
+	// ErrIndexCreateFailed is returned when an error occurred whilst trying to
+	// ensure an index
+	ErrIndexCreateFailed = errors.New("failed to create index")
+
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
 	ErrNoDocumentsFound = errors.New("no documents")
@@ -72,6 +76,10 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 		return nil, errors.New("invalid logger provided")
 	}
 
+	// Define a new context with a timeout to handle the database setup.
+	dbCtx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	// Prepare the options for connecting to the db.
 	opts := options.Client().
 		ApplyURI(uri).
@@ -87,13 +95,18 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to create a new db client")
 	}
-	err = c.Connect(ctx)
+	err = c.Connect(dbCtx)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to connect to db")
 	}
 	db := c.Database(dbName)
-	err = ensureDBSchema(ctx, db, logger)
-	if err != nil {
+	err = ensureDBSchema(dbCtx, db, logger)
+	if err != nil && errors.Contains(err, ErrIndexCreateFailed) {
+		// Do not fail here if we could not ensure the existence of an index. It
+		// should definitely be looked into, but this is no reason to prevent
+		// the blocker from running.
+		logger.Errorf(`[CRITICAL] failed to ensure DB schema, err: %v`, err)
+	} else if err != nil {
 		return nil, err
 	}
 	return &DB{
@@ -350,18 +363,18 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 		},
 	}
 
-	for collName := range schema {
-		_, err := ensureCollection(ctx, db, collName)
+	for collName, models := range schema {
+		coll, err := ensureCollection(ctx, db, collName)
 		if err != nil {
 			return err
 		}
-		// iv := coll.Indexes()
-		// var names []string
-		// names, err = iv.CreateMany(ctx, models)
-		// if err != nil {
-		// 	return errors.AddContext(err, "failed to create indexes")
-		// }
-		// log.Debugf("Ensured index exists: %v", names)
+		iv := coll.Indexes()
+		var names []string
+		names, err = iv.CreateMany(ctx, models)
+		if err != nil {
+			return errors.Compose(err, ErrIndexCreateFailed)
+		}
+		log.Debugf("Ensured index exists: %v", names)
 	}
 	return nil
 }
