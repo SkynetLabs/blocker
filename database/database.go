@@ -347,10 +347,10 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
 			},
-			{
-				Keys:    bson.D{{"failed", 1}},
-				Options: options.Index().SetName("failed"),
-			},
+			// {
+			// 	Keys:    bson.D{{"failed", 1}},
+			// 	Options: options.Index().SetName("failed"),
+			// },
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
 				Options: options.Index().SetName("timestamp_added"),
