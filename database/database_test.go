@@ -15,12 +15,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-const (
-	// defaultMongoTimeout is the timeout for the context used in testing
-	// whenever a context is sent to mongo
-	defaultMongoTimeout = 30 * time.Second
-)
-
 // newTestDB creates a new database for a given test's name.
 func newTestDB(ctx context.Context, dbName string) *DB {
 	dbName = strings.ReplaceAll(dbName, "/", "-")
@@ -79,7 +73,7 @@ func TestDatabase(t *testing.T) {
 // testPing is a unit test for the database's Ping method.
 func testPing(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), defaultMongoTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -103,7 +97,7 @@ func testPing(t *testing.T) {
 // the db.
 func testCreateBlockedSkylink(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), defaultMongoTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -154,7 +148,7 @@ func testCreateBlockedSkylink(t *testing.T) {
 // testIsAllowListedSkylink tests the 'IsAllowListed' method on the database.
 func testIsAllowListedSkylink(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), defaultMongoTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -196,7 +190,7 @@ func testIsAllowListedSkylink(t *testing.T) {
 // the 'MarkAsSucceeded' method on the database.
 func testMarkAsSucceeded(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), defaultMongoTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -244,7 +238,7 @@ func testMarkAsSucceeded(t *testing.T) {
 // the 'MarkAsFailed' method on the database.
 func testMarkAsFailed(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), defaultMongoTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
 	defer cancel()
 
 	// create test database

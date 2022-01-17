@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -13,6 +14,15 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
+)
+
+const (
+	// mongoDefaultTimeout is the timeout for the context used in testing
+	// whenever a context is sent to mongo
+	mongoDefaultTimeout = time.Minute
+
+	// mongoIndexCreateTimeout is the timeout used when creating indices
+	mongoIndexCreateTimeout = 10 * time.Second
 )
 
 var (
@@ -77,7 +87,7 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	}
 
 	// Define a new context with a timeout to handle the database setup.
-	dbCtx, cancel := context.WithTimeout(ctx, time.Minute)
+	dbCtx, cancel := context.WithTimeout(ctx, mongoDefaultTimeout)
 	defer cancel()
 
 	// Prepare the options for connecting to the db.
@@ -347,13 +357,13 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
 			},
-			// {
-			// 	Keys:    bson.D{{"failed", 1}},
-			// 	Options: options.Index().SetName("failed"),
-			// },
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
 				Options: options.Index().SetName("timestamp_added"),
+			},
+			{
+				Keys:    bson.D{{"failed", 1}},
+				Options: options.Index().SetName("failed"),
 			},
 		},
 		dbLatestBlockTimestamps: {
@@ -364,18 +374,28 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 		},
 	}
 
+	icOpts := options.CreateIndexes().SetMaxTime(mongoIndexCreateTimeout)
+
+	var icErr error
 	for collName, models := range schema {
 		coll, err := ensureCollection(ctx, db, collName)
 		if err != nil {
+			// no need to continue if ensuring a collection fails
 			return err
 		}
+
 		iv := coll.Indexes()
-		var names []string
-		names, err = iv.CreateMany(ctx, models)
+		names, err := iv.CreateMany(ctx, models, icOpts)
 		if err != nil {
-			return errors.Compose(err, ErrIndexCreateFailed)
+			// if the index creation fails, compose the error but continue to
+			// try and ensure the rest of the database schema
+			icErr = errors.Compose(icErr, errors.AddContext(err, fmt.Sprintf("collection '%v'", collName)))
+			continue
 		}
-		log.Debugf("Ensured index exists: %v", names)
+		log.Debugf("Ensured index exists: %v | %v", collName, names)
+	}
+	if icErr != nil {
+		return errors.Compose(icErr, ErrIndexCreateFailed)
 	}
 	return nil
 }
