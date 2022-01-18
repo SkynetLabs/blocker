@@ -63,6 +63,8 @@ func (sl *skylink) UnmarshalJSON(b []byte) error {
 		return err
 	}
 	// Trim all the redundant information.
+	//
+	// TODO: is this really necessary? if possible we should try and drop this
 	link, err = extractSkylinkHash(link)
 	if err != nil {
 		return err
@@ -94,8 +96,12 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	skyapi.WriteJSON(w, status)
 }
 
-// blockPOST blocks a skylink. It is meant to be used by trusted sources such as
-// the malware scanner or abuse email scanner.
+// blockPOST blocks a skylink
+//
+// NOTE: This route requires no authentication and thus it is meant to be used
+// by trusted sources such as the malware scanner or abuse email scanner. There
+// is another route called 'blockWithPoWPOST' that requires some proof of work
+// to be done by means of 'authenticating' the caller.
 func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	// Protect against large bodies.
 	b := http.MaxBytesReader(w, r.Body, 1<<16) // 64 kib
@@ -103,7 +109,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 
 	// Parse the request.
 	var body BlockPOST
-	err := json.NewDecoder(r.Body).Decode(&body)
+	err := json.NewDecoder(b).Decode(&body)
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
 		return
@@ -141,8 +147,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 		return
 	}
 
-	// Use the MySkyID as the sub and make sure we don't consider the reporter
-	// authenticated.
+	// Use the MySkyID as the sub to consider the reporter authenticated.
 	sub := hex.EncodeToString(body.PoW.MySkyID[:])
 
 	// Verify the pow.
@@ -167,15 +172,13 @@ func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httpro
 // block handlers. It executes all code which is shared between the two
 // handlers.
 func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, bp BlockPOST, sub string) {
-	// Decode the skylink
+	// Decode the skylink, we can safely ignore the error here as LoadString
+	// will have been called by the JSON decoder
 	var skylink skymodules.Skylink
-	err := skylink.LoadString(string(bp.Skylink))
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{"could not decode skylink"}, http.StatusBadRequest)
-		return
-	}
+	_ = skylink.LoadString(string(bp.Skylink))
 
 	// Resolve the skylink
+	var err error
 	skylink, err = api.staticSkydAPI.ResolveSkylink(skylink)
 	if err != nil {
 		// in case of an error we log and continue with the given skylink
