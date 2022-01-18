@@ -6,7 +6,6 @@ import (
 	"log"
 	"os"
 	"strconv"
-	"strings"
 
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
@@ -73,15 +72,10 @@ func main() {
 	}
 	logger.SetLevel(logLevel)
 
-	// Set the preferred portal address.
-	database.Portal = os.Getenv("PORTAL_DOMAIN")
-	if database.Portal == "" {
-		log.Fatal("missing env var PORTAL_DOMAIN")
-	}
-	if !strings.HasPrefix(database.Portal, "http") {
-		database.Portal = "https://" + database.Portal
-	}
 	// Set the unique name of this server.
+	//
+	// TODO: it might make sense to rename this to SERVER_NAME, SERVER_DOMAIN
+	// might not make sense in a single portal type setup
 	database.ServerDomain = os.Getenv("SERVER_DOMAIN")
 	if database.ServerDomain == "" {
 		log.Fatal("missing env var SERVER_DOMAIN")

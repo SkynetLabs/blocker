@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	// blockBatchSize is the max number of skylinks to be sent for blocking
-	// simultaneously.
+	// blockBatchSize is the max number of (skylink) hashes to be sent for
+	// blocking simultaneously.
 	blockBatchSize = 100
 
 	// blockBatchSizeDivisor is the divisor applied to the batch size when an
@@ -48,6 +48,7 @@ var (
 			Standard: time.Minute,
 		},
 	).(time.Duration)
+
 	// sleepOnErrStep defines the base step for sleeping after encountering an
 	// error. We'll increase the sleep by an order of magnitude on each
 	// subsequent error until sleepOnErrSteps. We'll multiply that by the number
@@ -107,7 +108,7 @@ func (bl *Blocker) RetryFailedSkylinks() error {
 		return nil
 	}
 
-	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", skylinksToString(skylinks))
+	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", skylinksToHashes(skylinks))
 
 	// Retry the skylinks
 	blocked, failed, err := bl.blockSkylinks(skylinks)
@@ -142,7 +143,7 @@ func (bl *Blocker) SweepAndBlock() error {
 		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
 	}
 
-	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToString(skylinks))
+	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToHashes(skylinks))
 
 	// Block the skylinks
 	blocked, failed, err := bl.blockSkylinks(skylinks)
@@ -267,15 +268,15 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 			end = len(skylinks)
 		}
 
-		// grab all skylinks for this batch
+		// grab all skylink hashes for this batch
 		batch := make([]string, end-start)
 		for i, sl := range skylinks[start:end] {
-			batch[i] = sl.Skylink
+			batch[i] = sl.Hash.String()
 		}
 
 		// send the batch to skyd, if an error occurs and the current batch size
 		// is greater than one, we simply retry with a smaller batch size
-		err = bl.staticSkydAPI.BlockSkylinks(batch)
+		err = bl.staticSkydAPI.BlockHashes(batch)
 
 		// if there's an error, and it's unrelated to the batch we sent, e.g.
 		// connection issue or something, we return here
@@ -312,12 +313,12 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 	return
 }
 
-// skylinksToString returns an array of skylinks as strings for the given
+// skylinksToHashes returns an array of skylink hashes as strings for the given
 // blocked skylinks array.
-func skylinksToString(skylinks []database.BlockedSkylink) []string {
+func skylinksToHashes(skylinks []database.BlockedSkylink) []string {
 	sls := make([]string, len(skylinks))
 	for i, sl := range skylinks {
-		sls[i] = sl.Skylink
+		sls[i] = sl.Hash.String()
 	}
 	return sls
 }

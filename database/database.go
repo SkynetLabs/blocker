@@ -8,12 +8,14 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
+	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
+	"go.sia.tech/siad/crypto"
 )
 
 const (
@@ -42,8 +44,8 @@ var (
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
 
-	// Portal is the preferred portal to use, e.g. https://siasky.net
-	Portal string
+	// Portal2 is the preferred portal to use, e.g. https://siasky.net
+	Portal2 string
 	// ServerDomain is the unique server name, e.g. eu-pol-4.siasky.net
 	ServerDomain string
 
@@ -52,12 +54,16 @@ var (
 
 	// dbName defines the name of the database this service uses
 	dbName = "blocker"
-	// dbSkylinks defines the name of the skylinks collection
-	dbSkylinks = "skylinks"
-	// dbAllowList defines the name of the allowlist collection
-	dbAllowList = "allowlist"
-	// dbLatestBlockTimestamps dbLatestBlockTimestamps
-	dbLatestBlockTimestamps = "latest_block_timestamps"
+
+	// collSkylinks defines the name of the skylinks collection
+	collSkylinks = "skylinks"
+	// collAllowlist defines the name of the allowlist collection
+	collAllowlist = "allowlist"
+	// collLatestBlockTimestamps collLatestBlockTimestamps
+	collLatestBlockTimestamps = "latest_block_timestamps"
+
+	// emptyHash is a helper to compare against an empty hash
+	emptyHash = crypto.Hash{}
 )
 
 // DB holds a connection to the database, as well as helpful shortcuts to
@@ -109,6 +115,8 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to connect to db")
 	}
+
+	// Ensure the database schema
 	db := c.Database(dbName)
 	err = ensureDBSchema(dbCtx, db, logger)
 	if err != nil && errors.Contains(err, ErrIndexCreateFailed) {
@@ -120,14 +128,31 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	} else if err != nil {
 		return nil, err
 	}
-	return &DB{
+
+	// Define the database
+	cdb := &DB{
 		ctx:             ctx,
 		staticClient:    c,
 		staticDB:        db,
-		staticAllowList: db.Collection(dbAllowList),
-		staticSkylinks:  db.Collection(dbSkylinks),
+		staticAllowList: db.Collection(collAllowlist),
+		staticSkylinks:  db.Collection(collSkylinks),
 		staticLogger:    logger,
-	}, nil
+	}
+
+	// Run compat code
+	err = cdb.compatTransformSkylinkToHash(dbCtx)
+	if err != nil {
+		// We do not error out if we failed to run this compat code. We log it
+		// as a critical, but this should not prevent the blocker from running.
+		logger.Errorf(`[CRITICAL] failed to successfully run 'compatTransformSkylinkToHash', err: %v`, err)
+	}
+
+	// TODO: once the above compat code ran on the database, and the code was
+	// converted to handle hashes and not skylinks, new compat code has to be
+	// written to remove the index on 'skylink' and drop the field from all
+	// documents in our database
+
+	return cdb, nil
 }
 
 // Close disconnects the db.
@@ -137,30 +162,14 @@ func (db *DB) Close() error {
 	return db.staticClient.Disconnect(ctx)
 }
 
-// Ping sends a ping command to verify that the client can connect to the DB and
-// specifically to the primary.
-func (db *DB) Ping(ctx context.Context) error {
-	return db.staticDB.Client().Ping(ctx, readpref.Primary())
-}
-
-// BlockedSkylink fetches the DB record that corresponds to the given skylink
-// from the database.
-func (db *DB) BlockedSkylink(ctx context.Context, s string) (*BlockedSkylink, error) {
-	sr := db.staticSkylinks.FindOne(ctx, bson.M{"skylink": s})
-	if sr.Err() != nil {
-		return nil, sr.Err()
-	}
-	var sl BlockedSkylink
-	err := sr.Decode(&sl)
-	if err != nil {
-		return nil, err
-	}
-	return &sl, nil
-}
-
 // CreateBlockedSkylink creates a new skylink. If the skylink already exists it
 // does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
+	// Ensure the hash is always set
+	if skylink.Hash == emptyHash {
+		return errors.New("unexpected blocked skylink, hash is empty")
+	}
+
 	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
 		db.staticLogger.Debugf("CreateBlockedSkylink: duplicate key, returning '%s'", ErrSkylinkExists.Error())
@@ -171,6 +180,12 @@ func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink)
 		db.staticLogger.Debugf("CreateBlockedSkylink: mongodb error '%s'", err.Error())
 	}
 	return err
+}
+
+// FindBySkylink fetches the DB record that corresponds to the given skylink
+// from the database.
+func (db *DB) FindBySkylink(ctx context.Context, s string) (*BlockedSkylink, error) {
+	return db.findOne(ctx, bson.M{"skylink": s})
 }
 
 // IsAllowListed returns whether the given skylink is on the allow list.
@@ -196,19 +211,11 @@ func (db *DB) MarkAsFailed(skylinks []BlockedSkylink) error {
 	return db.updateFailedFlag(skylinks, true)
 }
 
-// BlockedSkylinkSave saves the given BlockedSkylink record to the database.
-// NOTE: commented out since this method isn't used or tested.
-//func (db *DB) BlockedSkylinkSave(ctx context.Context, skylink *BlockedSkylink) error {
-//	filter := bson.M{"_id": skylink.ID}
-//	opts := &options.ReplaceOptions{
-//		Upsert: &True,
-//	}
-//	_, err := db.staticSkylinks.ReplaceOne(ctx, filter, skylink, opts)
-//	if err != nil {
-//		return errors.AddContext(err, "failed to save")
-//	}
-//	return nil
-//}
+// Ping sends a ping command to verify that the client can connect to the DB and
+// specifically to the primary.
+func (db *DB) Ping(ctx context.Context) error {
+	return db.staticDB.Client().Ping(ctx, readpref.Primary())
+}
 
 // SkylinksToBlock sweeps the database for new skylinks. It uses the latest
 // block timestamp for this server which is retrieves from the DB. It scans all
@@ -230,19 +237,8 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	}
 	opts := options.Find()
 	opts.SetSort(bson.D{{"timestamp_added", 1}})
-	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
-	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
-		return nil, nil
-	} else if err != nil {
-		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
-	}
 
-	list := make([]BlockedSkylink, 0)
-	err = c.All(db.ctx, &list)
-	if err != nil {
-		return nil, err
-	}
-	return list, nil
+	return db.find(db.ctx, filter, opts)
 }
 
 // SkylinksToRetry returns all skylinks that failed to get blocked the first
@@ -253,26 +249,15 @@ func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
 	filter := bson.M{"failed": bson.M{"$eq": true}}
 	opts := options.Find()
 	opts.SetSort(bson.D{{"timestamp_added", 1}})
-	c, err := db.staticDB.Collection(dbSkylinks).Find(db.ctx, filter, opts)
-	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
-		return nil, nil
-	} else if err != nil {
-		return nil, errors.AddContext(err, "failed to fetch skylinks from the DB")
-	}
 
-	list := make([]BlockedSkylink, 0)
-	err = c.All(db.ctx, &list)
-	if err != nil {
-		return nil, err
-	}
-	return list, nil
+	return db.find(db.ctx, filter, opts)
 }
 
 // LatestBlockTimestamp returns the timestamp (timestampAdded) of the latest
 // skylink that was blocked. When fetching new SkylinksToBlock we should start
 // from that timestamp (and one hour before that).
 func (db *DB) LatestBlockTimestamp() (time.Time, error) {
-	sr := db.staticDB.Collection(dbLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerDomain})
+	sr := db.staticDB.Collection(collLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerDomain})
 	if sr.Err() != nil && sr.Err() != mongo.ErrNoDocuments {
 		return time.Time{}, sr.Err()
 	}
@@ -296,7 +281,7 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 	filter := bson.M{"server_name": ServerDomain}
 	value := bson.M{"$set": bson.M{"server_name": ServerDomain, "latest_block": t}}
 	opts := options.UpdateOptions{Upsert: &True}
-	ur, err := db.staticDB.Collection(dbLatestBlockTimestamps).UpdateOne(db.ctx, filter, value, &opts)
+	ur, err := db.staticDB.Collection(collLatestBlockTimestamps).UpdateOne(db.ctx, filter, value, &opts)
 	if err != nil {
 		return errors.AddContext(err, "failed to update")
 	}
@@ -304,6 +289,95 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 		return ErrNoEntriesUpdated
 	}
 	return nil
+}
+
+// compatTransformSkylinkToHash is some compat code that transforms skylinks in
+// the database to hashes. Skylinks should not be persisted in their plain form
+// in the database.
+func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
+	collSkylinks := db.staticDB.Collection(collSkylinks)
+
+	// define a filter that matches documents with skylink and no hash
+	filter := bson.D{{"$and", []interface{}{
+		bson.D{{"skylink", bson.M{"$exists": true}}},
+		bson.D{{"$or", []interface{}{
+			bson.D{{"hash", nil}},
+			bson.D{{"hash", bson.M{"$exists": false}}},
+			bson.D{{"hash", emptyHash}},
+		}}},
+	}}}
+
+	// find all documents where the skyink has to be transformed to a hash
+	docs, err := db.find(ctx, filter)
+	if err != nil {
+		return err
+	}
+
+	// range over the documents and try to set the hash property on each one
+	for _, doc := range docs {
+		var sl skymodules.Skylink
+		err := sl.LoadString(doc.Skylink)
+		if err != nil {
+			// should be impossible
+			db.staticLogger.Errorf("failed to decode Skylink '%v'", doc.Skylink)
+			continue
+		}
+
+		// define a filter that matches this precise document, ensuring the hash
+		// is unset, seeing as this code might be running concurrently, it might
+		// have been updated by another process in the mean time
+		filter = bson.D{{"$and", []interface{}{
+			bson.D{{"_id", doc.ID}},
+			bson.D{{"$or", []interface{}{
+				bson.D{{"hash", nil}},
+				bson.D{{"hash", bson.M{"$exists": false}}},
+				bson.D{{"hash", emptyHash}},
+			}}},
+		}}}
+		value := bson.M{"$set": bson.M{"hash": crypto.Hash(sl.MerkleRoot())}}
+		_, err = collSkylinks.UpdateOne(ctx, filter, value)
+		if err != nil {
+			db.staticLogger.Errorf("failed to update hash of document with ID '%v', err %v", doc.ID, err)
+			continue
+		}
+	}
+
+	return nil
+}
+
+// find wraps the `Find` function on the Skylinks collection and returns an
+// array of decoded blocked skylink objects
+func (db *DB) find(ctx context.Context, filter interface{},
+	opts ...*options.FindOptions) ([]BlockedSkylink, error) {
+	c, err := db.staticDB.Collection(collSkylinks).Find(ctx, filter, opts...)
+	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
+		return nil, nil
+	} else if err != nil {
+		return nil, err
+	}
+
+	list := make([]BlockedSkylink, 0)
+	err = c.All(db.ctx, &list)
+	if err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+// findOne wraps the `FindOne` function on the Skylinks collection and returns
+// a decoded blocked skylink object
+func (db *DB) findOne(ctx context.Context, filter interface{},
+	opts ...*options.FindOneOptions) (*BlockedSkylink, error) {
+	sr := db.staticDB.Collection(collSkylinks).FindOne(ctx, filter, opts...)
+	if sr.Err() != nil {
+		return nil, sr.Err()
+	}
+	var sl BlockedSkylink
+	err := sr.Decode(&sl)
+	if err != nil {
+		return nil, err
+	}
+	return &sl, nil
 }
 
 // updateFailedFlag is a helper method that updates the failed flag on the
@@ -329,7 +403,7 @@ func (db *DB) updateFailedFlag(skylinks []BlockedSkylink, failed bool) error {
 	}
 
 	// perform the update
-	collSkylinks := db.staticDB.Collection(dbSkylinks)
+	collSkylinks := db.staticDB.Collection(collSkylinks)
 	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
 	return err
 }
@@ -342,7 +416,7 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	// schema defines a mapping between a collection name and the indexes that
 	// must exist for that collection.
 	schema := map[string][]mongo.IndexModel{
-		dbAllowList: {
+		collAllowlist: {
 			{
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
@@ -352,7 +426,7 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 				Options: options.Index().SetName("timestamp_added"),
 			},
 		},
-		dbSkylinks: {
+		collSkylinks: {
 			{
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),
@@ -366,7 +440,7 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 				Options: options.Index().SetName("failed"),
 			},
 		},
-		dbLatestBlockTimestamps: {
+		collLatestBlockTimestamps: {
 			{
 				Keys:    bson.D{{"server_name", 1}},
 				Options: options.Index().SetName("server_name").SetUnique(true),

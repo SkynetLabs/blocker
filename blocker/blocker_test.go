@@ -10,23 +10,25 @@ import (
 	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
+	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.sia.tech/siad/crypto"
 )
 
 // mockSkyd is a helper struct that implements the skyd API, all methods are
 // essentially a no-op except for 'BlockSkylinks' which keeps track of the
 // arguments with which it is called
 type mockSkyd struct {
-	BlockSkylinksReqs [][]string
+	BlockHashesReqs [][]string
 }
 
 // BlockSkylinks adds the given skylinks to the block list.
-func (api *mockSkyd) BlockSkylinks(skylinks []string) error {
-	api.BlockSkylinksReqs = append(api.BlockSkylinksReqs, skylinks)
+func (api *mockSkyd) BlockHashes(hashes []string) error {
+	api.BlockHashesReqs = append(api.BlockHashesReqs, hashes)
 
 	// check whether the caller expects an error to be thrown
-	for _, sl := range skylinks {
-		if sl == "throwerror" {
+	for _, h := range hashes {
+		if h == crypto.HashBytes([]byte("throwerror")).String() {
 			return errors.New(unableToUpdateBlocklistErrStr)
 		}
 	}
@@ -39,7 +41,7 @@ func (api *mockSkyd) IsSkydUp() bool {
 }
 
 // ResolveSkylink tries to resolve the given skylink to a V1 skylink.
-func (api *mockSkyd) ResolveSkylink(skylink string) (string, error) {
+func (api *mockSkyd) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
 	return skylink, nil
 }
 
@@ -56,7 +58,7 @@ func TestBlocker(t *testing.T) {
 	}{
 		{
 			name: "BlockSkylinks",
-			test: testBlockSkylinks,
+			test: testBlockHashes,
 		},
 	}
 	for _, test := range tests {
@@ -64,8 +66,8 @@ func TestBlocker(t *testing.T) {
 	}
 }
 
-// testBlockSkylinks is a unit test that covers the 'blockSkylinks' method.
-func testBlockSkylinks(t *testing.T) {
+// testBlockHashes is a unit test that covers the 'blockHashes' method.
+func testBlockHashes(t *testing.T) {
 	// create a mock skyd api
 	api := &mockSkyd{}
 
@@ -90,14 +92,17 @@ func testBlockSkylinks(t *testing.T) {
 	var skylinks []database.BlockedSkylink
 	var i int
 	for ; i < 9; i++ {
-		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i)})
+		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_%d", i)))
+		skylinks = append(skylinks, database.BlockedSkylink{Hash: hash})
 	}
 
 	// the last skylink before the failure should be the latest timestamp set,
 	// so save this timestamp as an expected value for later
-	skylinks = append(skylinks, database.BlockedSkylink{Skylink: "throwerror"})
+	hash := crypto.HashBytes([]byte("throwerror"))
+	skylinks = append(skylinks, database.BlockedSkylink{Hash: hash})
 	for ; i < 15; i++ {
-		skylinks = append(skylinks, database.BlockedSkylink{Skylink: fmt.Sprintf("skylink_%d", i)})
+		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_%d", i)))
+		skylinks = append(skylinks, database.BlockedSkylink{Hash: hash})
 	}
 
 	blocked, failed, err := blocker.blockSkylinks(skylinks)
@@ -113,18 +118,18 @@ func testBlockSkylinks(t *testing.T) {
 	}
 
 	// assert 18 requests in total happen to skyd, batch size 100, 10 and 1
-	if len(api.BlockSkylinksReqs) != 18 {
-		t.Fatalf("unexpected amount of calls to Skyd block endpoint, %v != 18", len(api.BlockSkylinksReqs))
+	if len(api.BlockHashesReqs) != 18 {
+		t.Fatalf("unexpected amount of calls to Skyd block endpoint, %v != 18", len(api.BlockHashesReqs))
 	}
-	if len(api.BlockSkylinksReqs[0]) != 16 {
-		t.Fatalf("unexpected first batch size, %v != 16", len(api.BlockSkylinksReqs[0]))
+	if len(api.BlockHashesReqs[0]) != 16 {
+		t.Fatalf("unexpected first batch size, %v != 16", len(api.BlockHashesReqs[0]))
 	}
-	if len(api.BlockSkylinksReqs[1]) != 10 {
-		t.Fatalf("unexpected second batch size, %v != 10", len(api.BlockSkylinksReqs[1]))
+	if len(api.BlockHashesReqs[1]) != 10 {
+		t.Fatalf("unexpected second batch size, %v != 10", len(api.BlockHashesReqs[1]))
 	}
 	for r := 2; r < 18; r++ {
-		if len(api.BlockSkylinksReqs[r]) != 1 {
-			t.Fatalf("unexpected batch size for req %d, %v != 1", r, len(api.BlockSkylinksReqs[r]))
+		if len(api.BlockHashesReqs[r]) != 1 {
+			t.Fatalf("unexpected batch size for req %d, %v != 1", r, len(api.BlockHashesReqs[r]))
 		}
 	}
 }

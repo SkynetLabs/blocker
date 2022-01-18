@@ -11,7 +11,8 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 )
 
-// API is our central entry point to all subsystems relevant to serving requests.
+// API is our central entry point to all subsystems relevant to serving
+// requests.
 type API struct {
 	staticDB      *database.DB
 	staticLogger  *logrus.Logger

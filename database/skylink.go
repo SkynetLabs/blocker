@@ -3,6 +3,7 @@ package database
 import (
 	"time"
 
+	"go.sia.tech/siad/crypto"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -19,6 +20,7 @@ type AllowListedSkylink struct {
 type BlockedSkylink struct {
 	ID                primitive.ObjectID `bson:"_id,omitempty"`
 	Skylink           string             `bson:"skylink"`
+	Hash              crypto.Hash        `bson:"hash"`
 	Reporter          Reporter           `bson:"reporter"`
 	Reverted          bool               `bson:"reverted"`
 	Failed            bool               `bson:"failed"`
