@@ -115,11 +115,28 @@ func testCreateBlockedSkylink(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
+	// Verify we assert both 'Hash' and 'Reported' properties are set
+	err := db.CreateBlockedSkylink(ctx, &BlockedSkylink{})
+	if err == nil || !strings.Contains(err.Error(), "'hash' is not set") {
+		t.Fatal("expected 'hash is not set' error", err)
+	}
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{Hash: crypto.HashBytes([]byte("somehash"))})
+	if err == nil || !strings.Contains(err.Error(), "'reported' is not set") {
+		t.Fatal("expected 'reported is not set' error", err)
+	}
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Hash:     crypto.HashBytes([]byte("somehash")),
+		Reported: "someskylink",
+	})
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+
 	// Create skylink to block.
 	now := time.Now().Round(time.Second).UTC()
 	sl := &BlockedSkylink{
-		Skylink: "somelink",
-		Hash:    crypto.HashBytes([]byte("somelink")),
+		Hash:     crypto.HashBytes([]byte("somelink")),
+		Reported: "somelink",
 		Reporter: Reporter{
 			Name:            "name",
 			Email:           "email",
@@ -129,11 +146,12 @@ func testCreateBlockedSkylink(t *testing.T) {
 		},
 		Reverted:          true,
 		RevertedTags:      []string{"A"},
+		Skylink:           "somelink",
 		Tags:              []string{"B"},
 		TimestampAdded:    now,
 		TimestampReverted: now.AddDate(1, 1, 1),
 	}
-	err := db.CreateBlockedSkylink(ctx, sl)
+	err = db.CreateBlockedSkylink(ctx, sl)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,19 +230,21 @@ func testMarkAsSucceeded(t *testing.T) {
 	// insert a regular document and one that was marked as failed
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_1",
+		Hash:           crypto.HashBytes([]byte("skylink_1")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_2",
+		Hash:           crypto.HashBytes([]byte("skylink_2")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 		Failed:         true,
 	})
 
-	toRetry, err := db.SkylinksToRetry()
+	toRetry, err := db.HashesToRetry()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,7 +257,7 @@ func testMarkAsSucceeded(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	toRetry, err = db.SkylinksToRetry()
+	toRetry, err = db.HashesToRetry()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,12 +280,14 @@ func testMarkAsFailed(t *testing.T) {
 	// insert two regular documents
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_1",
+		Hash:           crypto.HashBytes([]byte("skylink_1")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_2",
+		Hash:           crypto.HashBytes([]byte("skylink_2")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
@@ -284,8 +306,8 @@ func testMarkAsFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// check we currently have 0 failed skylinks
-	toRetry, err := db.SkylinksToRetry()
+	// check we currently have 0 failed hashes
+	toRetry, err := db.HashesToRetry()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -293,14 +315,18 @@ func testMarkAsFailed(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 0", len(toRetry))
 	}
 
-	// mark all docs as failed
-	err = db.MarkAsFailed(all)
+	// mark all hashes as failed
+	hashes := make([]crypto.Hash, len(all))
+	for i, doc := range all {
+		hashes[i] = doc.Hash
+	}
+	err = db.MarkAsFailed(hashes)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// check we now have 2
-	toRetry, err = db.SkylinksToRetry()
+	toRetry, err = db.HashesToRetry()
 	if err != nil {
 		t.Fatal(err)
 	}

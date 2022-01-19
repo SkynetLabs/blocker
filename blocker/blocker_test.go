@@ -57,7 +57,7 @@ func TestBlocker(t *testing.T) {
 		test func(t *testing.T)
 	}{
 		{
-			name: "BlockSkylinks",
+			name: "BlockHashes",
 			test: testBlockHashes,
 		},
 	}
@@ -72,7 +72,7 @@ func testBlockHashes(t *testing.T) {
 	api := &mockSkyd{}
 
 	// create the blocker
-	blocker, err := newTestBlocker("BlockSkylinks", api)
+	blocker, err := newTestBlocker("BlockHashes", api)
 	if err != nil {
 		panic(err)
 	}
@@ -84,28 +84,27 @@ func testBlockHashes(t *testing.T) {
 		}
 	}()
 
-	// create a list of 16 skylinks, where the 10th skylink is one that triggers
-	// an error to be thrown in skyd, this will ensure the blocker tries:
-	// - all skylinks in 1 batch
+	// create a list of 16 hashes, where the 10th hash is one that triggers an
+	// error to be thrown in skyd, this will ensure the blocker tries:
+	// - all hashes in 1 batch
 	// - a batch size of 10, which still fails
-	// - all skylinks in a batch size of 1, which returns the failing skylink
-	var skylinks []database.BlockedSkylink
+	// - all hashes in a batch size of 1, which returns the failing hash
+	var hashes []crypto.Hash
 	var i int
 	for ; i < 9; i++ {
-		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_%d", i)))
-		skylinks = append(skylinks, database.BlockedSkylink{Hash: hash})
+		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
+		hashes = append(hashes, hash)
 	}
 
-	// the last skylink before the failure should be the latest timestamp set,
+	// the last hash before the failure should be the latest timestamp set,
 	// so save this timestamp as an expected value for later
-	hash := crypto.HashBytes([]byte("throwerror"))
-	skylinks = append(skylinks, database.BlockedSkylink{Hash: hash})
+	hashes = append(hashes, crypto.HashBytes([]byte("throwerror")))
 	for ; i < 15; i++ {
-		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_%d", i)))
-		skylinks = append(skylinks, database.BlockedSkylink{Hash: hash})
+		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
+		hashes = append(hashes, hash)
 	}
 
-	blocked, failed, err := blocker.blockSkylinks(skylinks)
+	blocked, failed, err := blocker.blockHashes(hashes)
 	if err != nil {
 		t.Fatal("unexpected error thrown", err)
 	}

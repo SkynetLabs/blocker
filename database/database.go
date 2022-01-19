@@ -10,7 +10,6 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
-	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -167,7 +166,11 @@ func (db *DB) Close() error {
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
 	// Ensure the hash is always set
 	if skylink.Hash == emptyHash {
-		return errors.New("unexpected blocked skylink, hash is empty")
+		return errors.New("unexpected blocked skylink, 'hash' is not set")
+	}
+	// Ensure the 'reported' skylink is always set
+	if skylink.Reported == "" {
+		return errors.New("unexpected blocked skylink, 'reported' is not set")
 	}
 
 	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
@@ -201,14 +204,14 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 }
 
 // MarkAsSucceeded will toggle the failed flag for all documents in the given
-// list of skylinks that are currently marked as failed.
-func (db *DB) MarkAsSucceeded(skylinks []BlockedSkylink) error {
-	return db.updateFailedFlag(skylinks, false)
+// list of hashes that are currently marked as failed.
+func (db *DB) MarkAsSucceeded(hashes []crypto.Hash) error {
+	return db.updateFailedFlag(hashes, false)
 }
 
 // MarkAsFailed will mark the given documents as failed
-func (db *DB) MarkAsFailed(skylinks []BlockedSkylink) error {
-	return db.updateFailedFlag(skylinks, true)
+func (db *DB) MarkAsFailed(hashes []crypto.Hash) error {
+	return db.updateFailedFlag(hashes, true)
 }
 
 // Ping sends a ping command to verify that the client can connect to the DB and
@@ -217,11 +220,11 @@ func (db *DB) Ping(ctx context.Context) error {
 	return db.staticDB.Client().Ping(ctx, readpref.Primary())
 }
 
-// SkylinksToBlock sweeps the database for new skylinks. It uses the latest
+// HashesToBlock sweeps the database for unblocked hashes. It uses the latest
 // block timestamp for this server which is retrieves from the DB. It scans all
 // blocked skylinks from the hour before that timestamp, too, in order to
 // protect against system clock float.
-func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
+func (db *DB) HashesToBlock() ([]crypto.Hash, error) {
 	cutoff, err := db.LatestBlockTimestamp()
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch the latest timestamp from the DB")
@@ -237,20 +240,42 @@ func (db *DB) SkylinksToBlock() ([]BlockedSkylink, error) {
 	}
 	opts := options.Find()
 	opts.SetSort(bson.D{{"timestamp_added", 1}})
+	opts.SetProjection(bson.D{{"hash", 1}})
 
-	return db.find(db.ctx, filter, opts)
+	docs, err := db.find(db.ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract the hashes
+	hashes := make([]crypto.Hash, len(docs))
+	for i, doc := range docs {
+		hashes[i] = doc.Hash
+	}
+	return hashes, nil
 }
 
-// SkylinksToRetry returns all skylinks that failed to get blocked the first
-// time around. This is a retry mechanism to ensure we keep retrying to block
-// those skylinks, but at the same try 'unblock' the main block loop in order
-// for it to run smoothly.
-func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
+// HashesToRetry returns all hashes that failed to get blocked the first time
+// around. This is a retry mechanism to ensure we keep retrying to block those
+// hashes, but at the same try 'unblock' the main block loop in order for it
+// to run smoothly.
+func (db *DB) HashesToRetry() ([]crypto.Hash, error) {
 	filter := bson.M{"failed": bson.M{"$eq": true}}
 	opts := options.Find()
 	opts.SetSort(bson.D{{"timestamp_added", 1}})
+	opts.SetProjection(bson.D{{"hash", 1}})
 
-	return db.find(db.ctx, filter, opts)
+	docs, err := db.find(db.ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract the hashes
+	hashes := make([]crypto.Hash, len(docs))
+	for i, doc := range docs {
+		hashes[i] = doc.Hash
+	}
+	return hashes, nil
 }
 
 // LatestBlockTimestamp returns the timestamp (timestampAdded) of the latest
@@ -313,6 +338,11 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 		return err
 	}
 
+	// return if no docs need to be transformed
+	if len(docs) == 0 {
+		return nil
+	}
+
 	// range over the documents and try to set the hash property on each one
 	for _, doc := range docs {
 		var sl skymodules.Skylink
@@ -320,6 +350,14 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 		if err != nil {
 			// should be impossible
 			db.staticLogger.Errorf("failed to decode Skylink '%v'", doc.Skylink)
+			continue
+		}
+
+		// sanity check the skylink is not a v2 skylink, we can't update that
+		// document because it is illegal to call 'MerkleRoot' on a v2 skylink,
+		// the database should not contain v2 skylinks in the Skylink field
+		if sl.IsSkylinkV2() {
+			db.staticLogger.Errorf("failed to convert document with Skylink '%v', which is a v2 skylink", doc.Skylink)
 			continue
 		}
 
@@ -382,16 +420,10 @@ func (db *DB) findOne(ctx context.Context, filter interface{},
 
 // updateFailedFlag is a helper method that updates the failed flag on the
 // documents that correspond with the skylinks in the given array.
-func (db *DB) updateFailedFlag(skylinks []BlockedSkylink, failed bool) error {
-	// extract all ids
-	ids := make([]primitive.ObjectID, len(skylinks))
-	for i, sl := range skylinks {
-		ids[i] = sl.ID
-	}
-
+func (db *DB) updateFailedFlag(hashes []crypto.Hash, failed bool) error {
 	// create the filter, make sure to specify currently unblocked skylinks
 	filter := bson.M{
-		"_id":    bson.M{"$in": ids},
+		"hash":   bson.M{"$in": hashes},
 		"failed": bson.M{"$eq": !failed},
 	}
 
@@ -427,6 +459,11 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			},
 		},
 		collSkylinks: {
+			// TODO: the schema should be extended here to have a unique index
+			// on the 'hash' field, this can be done safely if the compat code
+			// has executed and the blocker has been running on hashes for a
+			// while, at that time the skylink index should be dropped and
+			// prevented from being set in the first place
 			{
 				Keys:    bson.D{{"skylink", 1}},
 				Options: options.Index().SetName("skylink").SetUnique(true),

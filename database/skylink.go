@@ -3,8 +3,8 @@ package database
 import (
 	"time"
 
-	"go.sia.tech/siad/crypto"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.sia.tech/siad/crypto"
 )
 
 // AllowListedSkylink is a skylink that is allow listed and thus prohibited from
@@ -17,14 +17,19 @@ type AllowListedSkylink struct {
 }
 
 // BlockedSkylink is a skylink blocked by an external request.
+//
+// NOTE: Reported contains the originally reported/blocked Skylink, this field
+// can differ from the Skylink if a v2 Skylink was reported, in that case the
+// Skylink property would contain the resolved v1 Skylink
 type BlockedSkylink struct {
 	ID                primitive.ObjectID `bson:"_id,omitempty"`
-	Skylink           string             `bson:"skylink"`
+	Failed            bool               `bson:"failed"`
 	Hash              crypto.Hash        `bson:"hash"`
+	Reported          string             `bson:"reported"`
 	Reporter          Reporter           `bson:"reporter"`
 	Reverted          bool               `bson:"reverted"`
-	Failed            bool               `bson:"failed"`
 	RevertedTags      []string           `bson:"reverted_tags"`
+	Skylink           string             `bson:"skylink"`
 	Tags              []string           `bson:"tags"`
 	TimestampAdded    time.Time          `bson:"timestamp_added"`
 	TimestampReverted time.Time          `bson:"timestamp_reverted"`
