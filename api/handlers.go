@@ -174,11 +174,12 @@ func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httpro
 func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, bp BlockPOST, sub string) {
 	// Decode the skylink, we can safely ignore the error here as LoadString
 	// will have been called by the JSON decoder
-	var reported skymodules.Skylink
-	_ = reported.LoadString(string(bp.Skylink))
+	var skylink skymodules.Skylink
+	_ = skylink.LoadString(string(bp.Skylink))
 
 	// Resolve the skylink
-	skylink, err := api.staticSkydAPI.ResolveSkylink(reported)
+	var err error
+	skylink, err = api.staticSkydAPI.ResolveSkylink(skylink)
 	if err != nil {
 		// in case of an error we log and continue with the given skylink
 		api.staticLogger.Errorf("failed to resolve skylink '%v', err: %v", skylink, err)
@@ -197,7 +198,7 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 	}
 
 	// Block the link.
-	err = api.block(ctx, bp, reported, skylink, sub, sub == "")
+	err = api.block(ctx, bp, skylink, sub, sub == "")
 	if errors.Contains(err, database.ErrSkylinkExists) {
 		skyapi.WriteJSON(w, statusResponse{"duplicate"})
 		return
@@ -210,14 +211,13 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 }
 
 // block blocks a skylink
-func (api *API) block(ctx context.Context, bp BlockPOST, reported, skylink skymodules.Skylink, sub string, unauthenticated bool) error {
+func (api *API) block(ctx context.Context, bp BlockPOST, skylink skymodules.Skylink, sub string, unauthenticated bool) error {
 	// TODO: currently we still set the Skylink, as soon as this module is
 	// converted to work fully with hashes, the Skylink field needs to be
 	// dropped.
 	bs := &database.BlockedSkylink{
-		Reported: reported.String(),
-		Skylink:  skylink.String(),
-		Hash:     crypto.Hash(skylink.MerkleRoot()),
+		Skylink: skylink.String(),
+		Hash:    crypto.Hash(skylink.MerkleRoot()),
 		Reporter: database.Reporter{
 			Name:            bp.Reporter.Name,
 			Email:           bp.Reporter.Email,

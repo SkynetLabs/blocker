@@ -17,15 +17,10 @@ type AllowListedSkylink struct {
 }
 
 // BlockedSkylink is a skylink blocked by an external request.
-//
-// NOTE: Reported contains the originally reported/blocked Skylink, this field
-// can differ from the Skylink if a v2 Skylink was reported, in that case the
-// Skylink property would contain the resolved v1 Skylink
 type BlockedSkylink struct {
 	ID                primitive.ObjectID `bson:"_id,omitempty"`
 	Failed            bool               `bson:"failed"`
 	Hash              crypto.Hash        `bson:"hash"`
-	Reported          string             `bson:"reported"`
 	Reporter          Reporter           `bson:"reporter"`
 	Reverted          bool               `bson:"reverted"`
 	RevertedTags      []string           `bson:"reverted_tags"`

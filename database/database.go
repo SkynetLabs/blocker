@@ -168,10 +168,6 @@ func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink)
 	if skylink.Hash == emptyHash {
 		return errors.New("unexpected blocked skylink, 'hash' is not set")
 	}
-	// Ensure the 'reported' skylink is always set
-	if skylink.Reported == "" {
-		return errors.New("unexpected blocked skylink, 'reported' is not set")
-	}
 
 	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
 	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {

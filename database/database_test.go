@@ -115,18 +115,13 @@ func testCreateBlockedSkylink(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// Verify we assert both 'Hash' and 'Reported' properties are set
+	// Verify we assert 'Hash' is set
 	err := db.CreateBlockedSkylink(ctx, &BlockedSkylink{})
 	if err == nil || !strings.Contains(err.Error(), "'hash' is not set") {
 		t.Fatal("expected 'hash is not set' error", err)
 	}
-	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{Hash: crypto.HashBytes([]byte("somehash"))})
-	if err == nil || !strings.Contains(err.Error(), "'reported' is not set") {
-		t.Fatal("expected 'reported is not set' error", err)
-	}
 	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
-		Hash:     crypto.HashBytes([]byte("somehash")),
-		Reported: "someskylink",
+		Hash: crypto.HashBytes([]byte("somehash")),
 	})
 	if err != nil {
 		t.Fatal("unexpected error", err)
@@ -135,8 +130,7 @@ func testCreateBlockedSkylink(t *testing.T) {
 	// Create skylink to block.
 	now := time.Now().Round(time.Second).UTC()
 	sl := &BlockedSkylink{
-		Hash:     crypto.HashBytes([]byte("somelink")),
-		Reported: "somelink",
+		Hash: crypto.HashBytes([]byte("somelink")),
 		Reporter: Reporter{
 			Name:            "name",
 			Email:           "email",
