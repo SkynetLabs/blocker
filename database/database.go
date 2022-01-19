@@ -455,6 +455,11 @@ func (db *DB) findOne(ctx context.Context, filter interface{},
 // updateFailedFlag is a helper method that updates the failed flag on the
 // documents that correspond with the skylinks in the given array.
 func (db *DB) updateFailedFlag(hashes []crypto.Hash, failed bool) error {
+	// return early if no hashes were given
+	if len(hashes) == 0 {
+		return nil
+	}
+
 	// create the filter, make sure to specify currently unblocked skylinks
 	filter := bson.M{
 		"hash":   bson.M{"$in": hashes},

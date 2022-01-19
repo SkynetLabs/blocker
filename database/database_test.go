@@ -228,6 +228,13 @@ func testMarkAsSucceeded(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
+	// ensure 'MarkAsSucceeded' can handle an empty slice
+	var empty []crypto.Hash
+	err := db.MarkAsSucceeded(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+
 	// insert a regular document and one that was marked as failed
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_1",
@@ -277,6 +284,13 @@ func testMarkAsFailed(t *testing.T) {
 	// create test database
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
+
+	// ensure 'MarkAsFailed' can handle an empty slice
+	var empty []crypto.Hash
+	err := db.MarkAsFailed(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// insert two regular documents
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
