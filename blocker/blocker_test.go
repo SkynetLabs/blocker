@@ -16,13 +16,13 @@ import (
 )
 
 // mockSkyd is a helper struct that implements the skyd API, all methods are
-// essentially a no-op except for 'BlockSkylinks' which keeps track of the
+// essentially a no-op except for 'BlockHashes' which keeps track of the
 // arguments with which it is called
 type mockSkyd struct {
 	BlockHashesReqs [][]string
 }
 
-// BlockSkylinks adds the given skylinks to the block list.
+// BlockHashes adds the given hashes to the block list.
 func (api *mockSkyd) BlockHashes(hashes []string) error {
 	api.BlockHashesReqs = append(api.BlockHashesReqs, hashes)
 
