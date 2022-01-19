@@ -29,11 +29,7 @@ func newTestDB(ctx context.Context, dbName string) *DB {
 	if err != nil {
 		panic(err)
 	}
-	_, err = db.staticSkylinks.DeleteMany(ctx, bson.D{})
-	if err != nil {
-		panic(err)
-	}
-	_, err = db.staticAllowList.DeleteMany(ctx, bson.D{})
+	err = db.Purge(ctx)
 	if err != nil {
 		panic(err)
 	}
@@ -84,7 +80,7 @@ func TestDatabase(t *testing.T) {
 // testPing is a unit test for the database's Ping method.
 func testPing(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -108,14 +104,14 @@ func testPing(t *testing.T) {
 // the db.
 func testCreateBlockedSkylink(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// Verify we assert 'Hash' is set
+	// verify we assert 'Hash' is set
 	err := db.CreateBlockedSkylink(ctx, &BlockedSkylink{})
 	if err == nil || !strings.Contains(err.Error(), "'hash' is not set") {
 		t.Fatal("expected 'hash is not set' error", err)
@@ -127,10 +123,18 @@ func testCreateBlockedSkylink(t *testing.T) {
 		t.Fatal("unexpected error", err)
 	}
 
-	// Create skylink to block.
+	// create skylink to block.
+	var sl skymodules.Skylink
+	err = sl.LoadString("_B19BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1kaA")
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+	hash := crypto.Hash(sl.MerkleRoot())
+
+	// create a blocked skylink struct
 	now := time.Now().Round(time.Second).UTC()
-	sl := &BlockedSkylink{
-		Hash: crypto.HashBytes([]byte("somelink")),
+	bsl := &BlockedSkylink{
+		Hash: hash,
 		Reporter: Reporter{
 			Name:            "name",
 			Email:           "email",
@@ -140,28 +144,31 @@ func testCreateBlockedSkylink(t *testing.T) {
 		},
 		Reverted:          true,
 		RevertedTags:      []string{"A"},
-		Skylink:           "somelink",
+		Skylink:           sl.String(),
 		Tags:              []string{"B"},
 		TimestampAdded:    now,
 		TimestampReverted: now.AddDate(1, 1, 1),
 	}
-	err = db.CreateBlockedSkylink(ctx, sl)
+	err = db.CreateBlockedSkylink(ctx, bsl)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// Fetch it again.
-	fetchedSL, err := db.FindBySkylink(ctx, sl.Skylink)
+	fetchedSL, err := db.FindByHash(ctx, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if fetchedSL == nil {
+		t.Fatal("should have found the skylink")
+	}
 
 	// Set the id of the fetchedSL on the sl.
-	sl.ID = fetchedSL.ID
+	bsl.ID = fetchedSL.ID
 
 	// Compare.
-	if !reflect.DeepEqual(*sl, *fetchedSL) {
-		b1, _ := json.Marshal(*sl)
+	if !reflect.DeepEqual(*bsl, *fetchedSL) {
+		b1, _ := json.Marshal(*bsl)
 		b2, _ := json.Marshal(*fetchedSL)
 		fmt.Println(string(b1))
 		fmt.Println(string(b2))
@@ -172,7 +179,7 @@ func testCreateBlockedSkylink(t *testing.T) {
 // testIsAllowListedSkylink tests the 'IsAllowListed' method on the database.
 func testIsAllowListedSkylink(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -214,7 +221,7 @@ func testIsAllowListedSkylink(t *testing.T) {
 // the 'MarkAsSucceeded' method on the database.
 func testMarkAsSucceeded(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -264,7 +271,7 @@ func testMarkAsSucceeded(t *testing.T) {
 // the 'MarkAsFailed' method on the database.
 func testMarkAsFailed(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
@@ -335,7 +342,7 @@ func testMarkAsFailed(t *testing.T) {
 // execution of the 'compatTransformSkylinkToHash' method on the database.
 func testCompatTransformSkylinkToHash(t *testing.T) {
 	// create context
-	ctx, cancel := context.WithTimeout(context.Background(), mongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database

@@ -125,7 +125,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 		}
 	}
 
-	// Further handle the request
+	// Handle the request
 	api.handleBlockRequest(r.Context(), w, body, sub)
 }
 
@@ -157,7 +157,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 		return
 	}
 
-	// Further handle the request
+	// Handle the request
 	api.handleBlockRequest(r.Context(), w, body.BlockPOST, sub)
 }
 

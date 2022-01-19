@@ -18,15 +18,19 @@ import (
 )
 
 const (
-	// mongoDefaultTimeout is the timeout for the context used in testing
+	// MongoDefaultTimeout is the timeout for the context used in testing
 	// whenever a context is sent to mongo
-	mongoDefaultTimeout = time.Minute
+	MongoDefaultTimeout = time.Minute
 
 	// mongoIndexCreateTimeout is the timeout used when creating indices
 	mongoIndexCreateTimeout = 10 * time.Second
 )
 
 var (
+	// ErrDuplicateKey is returned when an insert is attempted that violates the
+	// unique constraint on a certain field.
+	ErrDuplicateKey = errors.New("E11000 duplicate key")
+
 	// ErrIndexCreateFailed is returned when an error occurred when trying to
 	// ensure an index
 	ErrIndexCreateFailed = errors.New("failed to create index")
@@ -67,6 +71,8 @@ var (
 
 // DB holds a connection to the database, as well as helpful shortcuts to
 // collections and utilities.
+//
+// NOTE: update the 'Purge' method when adding new collections
 type DB struct {
 	ctx             context.Context
 	staticClient    *mongo.Client
@@ -92,7 +98,7 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	}
 
 	// Define a new context with a timeout to handle the database setup.
-	dbCtx, cancel := context.WithTimeout(ctx, mongoDefaultTimeout)
+	dbCtx, cancel := context.WithTimeout(ctx, MongoDefaultTimeout)
 	defer cancel()
 
 	// Prepare the options for connecting to the db.
@@ -164,27 +170,38 @@ func (db *DB) Close() error {
 // CreateBlockedSkylink creates a new skylink. If the skylink already exists it
 // does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
-	// Ensure the hash is always set
+	// Ensure the hash is set
 	if skylink.Hash == emptyHash {
 		return errors.New("unexpected blocked skylink, 'hash' is not set")
 	}
 
+	// Insert the skylink
 	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
-	if err != nil && strings.Contains(err.Error(), "E11000 duplicate key error collection") {
-		db.staticLogger.Debugf("CreateBlockedSkylink: duplicate key, returning '%s'", ErrSkylinkExists.Error())
-		// This skylink already exists in the DB.
+	if isDuplicateKey(err) {
 		return ErrSkylinkExists
 	}
 	if err != nil {
-		db.staticLogger.Debugf("CreateBlockedSkylink: mongodb error '%s'", err.Error())
+		db.staticLogger.Debugf("CreateBlockedSkylink: mongodb error '%v'", err)
+		return err
 	}
-	return err
+	return nil
 }
 
-// FindBySkylink fetches the DB record that corresponds to the given skylink
+// CreateAllowListedSkylink creates a new allowlisted skylink. If the skylink
+// already exists it does nothing and returns without failure.
+func (db *DB) CreateAllowListedSkylink(ctx context.Context, skylink *AllowListedSkylink) error {
+	// Insert the skylink
+	_, err := db.staticAllowList.InsertOne(ctx, skylink)
+	if err != nil && !isDuplicateKey(err) {
+		return err
+	}
+	return nil
+}
+
+// FindByHash fetches the DB record that corresponds to the given hash
 // from the database.
-func (db *DB) FindBySkylink(ctx context.Context, s string) (*BlockedSkylink, error) {
-	return db.findOne(ctx, bson.M{"skylink": s})
+func (db *DB) FindByHash(ctx context.Context, hash crypto.Hash) (*BlockedSkylink, error) {
+	return db.findOne(ctx, bson.M{"hash": hash})
 }
 
 // IsAllowListed returns whether the given skylink is on the allow list.
@@ -214,6 +231,22 @@ func (db *DB) MarkAsFailed(hashes []crypto.Hash) error {
 // specifically to the primary.
 func (db *DB) Ping(ctx context.Context) error {
 	return db.staticDB.Client().Ping(ctx, readpref.Primary())
+}
+
+// Purge deletes all documents from all collections in the database
+//
+// NOTE: this function should never be called in production and should only be
+// used for testing purposes
+func (db *DB) Purge(ctx context.Context) error {
+	_, err := db.staticSkylinks.DeleteMany(ctx, bson.D{})
+	if err != nil {
+		return errors.AddContext(err, "failed to purge skylinks collection")
+	}
+	_, err = db.staticAllowList.DeleteMany(ctx, bson.D{})
+	if err != nil {
+		return errors.AddContext(err, "failed to purge allowlist collection")
+	}
+	return nil
 }
 
 // HashesToBlock sweeps the database for unblocked hashes. It uses the latest
@@ -384,9 +417,10 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 func (db *DB) find(ctx context.Context, filter interface{},
 	opts ...*options.FindOptions) ([]BlockedSkylink, error) {
 	c, err := db.staticDB.Collection(collSkylinks).Find(ctx, filter, opts...)
-	if err != nil && errors.Contains(err, ErrNoDocumentsFound) {
+	if isDocumentNotFound(err) {
 		return nil, nil
-	} else if err != nil {
+	}
+	if err != nil {
 		return nil, err
 	}
 
@@ -403,9 +437,13 @@ func (db *DB) find(ctx context.Context, filter interface{},
 func (db *DB) findOne(ctx context.Context, filter interface{},
 	opts ...*options.FindOneOptions) (*BlockedSkylink, error) {
 	sr := db.staticDB.Collection(collSkylinks).FindOne(ctx, filter, opts...)
+	if isDocumentNotFound(sr.Err()) {
+		return nil, nil
+	}
 	if sr.Err() != nil {
 		return nil, sr.Err()
 	}
+
 	var sl BlockedSkylink
 	err := sr.Decode(&sl)
 	if err != nil {
@@ -531,4 +569,13 @@ func isDocumentNotFound(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), ErrNoDocumentsFound.Error())
+}
+
+// isDuplicateKey is a helper function that returns whether the given error
+// contains the mongo duplicate key error message.
+func isDuplicateKey(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), ErrDuplicateKey.Error())
 }
