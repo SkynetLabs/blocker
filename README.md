@@ -26,15 +26,23 @@ So that's without portal and without the `sia://` prefix.
 # Environment
 
 This service depends on the following environment variables:
-* `PORTAL_DOMAIN`, e.g. `siasky.net`
 * `API_HOST`, e.g. `sia` (defaults to `sia`)
 * `API_PORT`, e.g. `9980` (defaults to `9980`)
 * `SIA_API_PASSWORD`
-* `SERVER_DOMAIN`, e.g. `eu-ger-5.siasky.net`
-* `BLOCKER_LOG_LEVEL`, defaults to `info`
 * `SKYNET_DB_HOST`
 * `SKYNET_DB_PORT`
 * `SKYNET_DB_USER`
 * `SKYNET_DB_PASS`
 * `SKYNET_ACCOUNTS_HOST`, defaults to `accounts`
 * `SKYNET_ACCOUNTS_PORT`, defaults to `3000`
+* `SERVER_DOMAIN`, e.g. `eu-ger-5.siasky.net`
+* `PORTAL_DOMAIN`, e.g. `siasky.net`
+* `BLOCKER_LOG_LEVEL`, defaults to `info`
+
+## Blocker Identifier
+
+For the blocker module to work properly, it must have a unique identifier. In a
+multi-server setup, this should be configured through the `SERVER_DOMAIN`
+environemnt variable. In a single-server setup however, the `SERVER_DOMAIN`
+environment variable is not set, in that case the blocker will fall back to
+using the `PORTAL_DOMAIN` as a unique identifier for the blocker module.

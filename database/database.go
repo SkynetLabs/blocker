@@ -42,9 +42,10 @@ var (
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
 
-	// Portal is the preferred portal to use, e.g. https://siasky.net
-	Portal string
 	// ServerDomain is the unique server name, e.g. eu-pol-4.siasky.net
+	//
+	// NOTE: this variable is set to the SERVER_DOMAIN environment variable if
+	// present, if not it fall backs to the PORTAL_DOMAIN environment variable
 	ServerDomain string
 
 	// True is a helper value, so we can pass a *bool to MongoDB's methods.
