@@ -41,8 +41,12 @@ This service depends on the following environment variables:
 
 ## Blocker Identifier
 
-For the blocker module to work properly, it must have a unique identifier. In a
-multi-server setup, this should be configured through the `SERVER_DOMAIN`
-environemnt variable. In a single-server setup however, the `SERVER_DOMAIN`
-environment variable is not set, in that case the blocker will fall back to
-using the `PORTAL_DOMAIN` as a unique identifier for the blocker module.
+The blocker requires a unique identifier because the blocker keeps a state
+variable that indicates which hashes have been blocked on the local skyd
+instance. All blocker modules work off of the same database, but every server
+has to keep track of what hashes have been blocked already.
+
+In a multi-server setup, this should be configured through the `SERVER_DOMAIN`
+environment variable. In a single-server setup however, the `SERVER_DOMAIN`
+environment variable is not set, in which case we fall back to using the
+`PORTAL_DOMAIN` environemnt variable as a unique identifier.
