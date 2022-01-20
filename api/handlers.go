@@ -228,12 +228,12 @@ func (api *API) block(ctx context.Context, bp BlockPOST, skylink skymodules.Skyl
 		Tags:           bp.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
-	api.staticLogger.Tracef("blockPOST will block Skylink hash %s", bs.Hash)
+	api.staticLogger.Debugf("blocking hash %s", bs.Hash)
 	err := api.staticDB.CreateBlockedSkylink(ctx, bs)
 	if err != nil {
 		return err
 	}
-	api.staticLogger.Debugf("Added Skylink hash %s", bs.Hash)
+	api.staticLogger.Debugf("blocked hash %s", bs.Hash)
 	return nil
 }
 

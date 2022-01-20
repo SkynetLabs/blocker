@@ -73,9 +73,6 @@ func main() {
 	logger.SetLevel(logLevel)
 
 	// Set the unique name of this server.
-	//
-	// TODO: it might make sense to rename this to SERVER_NAME, SERVER_DOMAIN
-	// might not make sense in a single portal type setup
 	database.ServerDomain = os.Getenv("SERVER_DOMAIN")
 	if database.ServerDomain == "" {
 		log.Fatal("missing env var SERVER_DOMAIN")

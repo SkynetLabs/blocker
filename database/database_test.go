@@ -372,22 +372,13 @@ func testCompatTransformSkylinkToHash(t *testing.T) {
 			bson.D{{"$or", []interface{}{
 				bson.D{{"hash", nil}},
 				bson.D{{"hash", bson.M{"$exists": false}}},
-				bson.D{{"hash", emptyHash}},
+				bson.D{{"hash", crypto.Hash{}}},
 			}}},
 		}}})
 		if err != nil {
 			t.Fatal(err)
 		}
 		return len(docs)
-	}
-
-	// define a helper function to decode a skylink as string into a skylink obj
-	skylinkFromString := func(skylink string) (sl skymodules.Skylink) {
-		err := sl.LoadString(skylink)
-		if err != nil {
-			t.Fatal(err)
-		}
-		return
 	}
 
 	// assert the number of 'old' docs is 0
@@ -475,4 +466,13 @@ func testCompatTransformSkylinkToHash(t *testing.T) {
 	if crypto.Hash(sl33.MerkleRoot()) != skylinks[2].Hash {
 		t.Fatal("unexpected hash value")
 	}
+}
+
+// define a helper function to decode a skylink as string into a skylink obj
+func skylinkFromString(skylink string) (sl skymodules.Skylink) {
+	err := sl.LoadString(skylink)
+	if err != nil {
+		panic(err)
+	}
+	return
 }

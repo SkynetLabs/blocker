@@ -74,7 +74,7 @@ func testBlockHashes(t *testing.T) {
 	// create the blocker
 	blocker, err := newTestBlocker("BlockHashes", api)
 	if err != nil {
-		panic(err)
+		t.Fatal(err)
 	}
 
 	// defer a db close

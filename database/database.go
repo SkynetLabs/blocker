@@ -64,9 +64,6 @@ var (
 	collAllowlist = "allowlist"
 	// collLatestBlockTimestamps collLatestBlockTimestamps
 	collLatestBlockTimestamps = "latest_block_timestamps"
-
-	// emptyHash is a helper to compare against an empty hash
-	emptyHash = crypto.Hash{}
 )
 
 // DB holds a connection to the database, as well as helpful shortcuts to
@@ -171,7 +168,7 @@ func (db *DB) Close() error {
 // does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
 	// Ensure the hash is set
-	if skylink.Hash == emptyHash {
+	if skylink.Hash == (crypto.Hash{}) {
 		return errors.New("unexpected blocked skylink, 'hash' is not set")
 	}
 
@@ -261,7 +258,7 @@ func (db *DB) HashesToBlock() ([]crypto.Hash, error) {
 	// Push cutoff one hour into the past in order to compensate of any
 	// potential system time drift.
 	cutoff = cutoff.Add(-time.Hour)
-	db.staticLogger.Tracef("SkylinksToBlock: fetching all skylinks added after cutoff of %s", cutoff.String())
+	db.staticLogger.Tracef("HashesToBlock: fetching all hashes added after cutoff of %s", cutoff.String())
 
 	filter := bson.M{
 		"timestamp_added": bson.M{"$gt": cutoff},
@@ -357,7 +354,7 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 		bson.D{{"$or", []interface{}{
 			bson.D{{"hash", nil}},
 			bson.D{{"hash", bson.M{"$exists": false}}},
-			bson.D{{"hash", emptyHash}},
+			bson.D{{"hash", crypto.Hash{}}},
 		}}},
 	}}}
 
@@ -398,7 +395,7 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 			bson.D{{"$or", []interface{}{
 				bson.D{{"hash", nil}},
 				bson.D{{"hash", bson.M{"$exists": false}}},
-				bson.D{{"hash", emptyHash}},
+				bson.D{{"hash", crypto.Hash{}}},
 			}}},
 		}}}
 		value := bson.M{"$set": bson.M{"hash": crypto.Hash(sl.MerkleRoot())}}
