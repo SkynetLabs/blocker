@@ -42,7 +42,7 @@ var (
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
 
-	// ServerUID is a random 16-char string that uniquely identifies the server
+	// ServerUID is a random string that uniquely identifies the server
 	ServerUID string
 
 	// True is a helper value, so we can pass a *bool to MongoDB's methods.
