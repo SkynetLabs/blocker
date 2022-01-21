@@ -35,18 +35,5 @@ This service depends on the following environment variables:
 * `SKYNET_DB_PASS`
 * `SKYNET_ACCOUNTS_HOST`, defaults to `accounts`
 * `SKYNET_ACCOUNTS_PORT`, defaults to `3000`
-* `SERVER_DOMAIN`, e.g. `eu-ger-5.siasky.net`
-* `PORTAL_DOMAIN`, e.g. `siasky.net`
+* `SERVER_UID`, e.g. `94743e8e2673a176`
 * `BLOCKER_LOG_LEVEL`, defaults to `info`
-
-## Blocker Identifier
-
-The blocker requires a unique identifier because the blocker keeps a state
-variable that indicates which hashes have been blocked on the local skyd
-instance. All blocker modules work off of the same database, but every server
-has to keep track of what hashes have been blocked already.
-
-In a multi-server setup, this should be configured through the `SERVER_DOMAIN`
-environment variable. In a single-server setup however, the `SERVER_DOMAIN`
-environment variable is not set, in which case we fall back to using the
-`PORTAL_DOMAIN` environemnt variable as a unique identifier.

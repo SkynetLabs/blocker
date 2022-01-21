@@ -42,11 +42,8 @@ var (
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
 
-	// ServerDomain is the unique server name, e.g. eu-pol-4.siasky.net
-	//
-	// NOTE: this variable is set to the SERVER_DOMAIN environment variable if
-	// present, if not it fall backs to the PORTAL_DOMAIN environment variable
-	ServerDomain string
+	// ServerUID is a random 16-char string that uniquely identifies the server
+	ServerUID string
 
 	// True is a helper value, so we can pass a *bool to MongoDB's methods.
 	True = true
@@ -273,7 +270,7 @@ func (db *DB) SkylinksToRetry() ([]BlockedSkylink, error) {
 // skylink that was blocked. When fetching new SkylinksToBlock we should start
 // from that timestamp (and one hour before that).
 func (db *DB) LatestBlockTimestamp() (time.Time, error) {
-	sr := db.staticDB.Collection(dbLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerDomain})
+	sr := db.staticDB.Collection(dbLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerUID})
 	if sr.Err() != nil && sr.Err() != mongo.ErrNoDocuments {
 		return time.Time{}, sr.Err()
 	}
@@ -294,8 +291,8 @@ func (db *DB) LatestBlockTimestamp() (time.Time, error) {
 // skylink that was blocked. When fetching new SkylinksToBlock we should start
 // from that timestamp (and one hour before that).
 func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
-	filter := bson.M{"server_name": ServerDomain}
-	value := bson.M{"$set": bson.M{"server_name": ServerDomain, "latest_block": t}}
+	filter := bson.M{"server_name": ServerUID}
+	value := bson.M{"$set": bson.M{"server_name": ServerUID, "latest_block": t}}
 	opts := options.UpdateOptions{Upsert: &True}
 	ur, err := db.staticDB.Collection(dbLatestBlockTimestamps).UpdateOne(db.ctx, filter, value, &opts)
 	if err != nil {

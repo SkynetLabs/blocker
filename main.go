@@ -72,14 +72,10 @@ func main() {
 	}
 	logger.SetLevel(logLevel)
 
-	// Set the unique name of this server. If SERVER_DOMAIN is net present,
-	// which is possible in a single-server setup, the PORTAL_DOMAIN is used.
-	database.ServerDomain = os.Getenv("SERVER_DOMAIN")
-	if database.ServerDomain == "" {
-		database.ServerDomain = os.Getenv("PORTAL_DOMAIN")
-		if database.ServerDomain == "" {
-			log.Fatal("missing unique server name, configure either SERVER_DOMAIN or PORTAL_DOMAIN (as fall back)")
-		}
+	// Set the unique id of this server.
+	database.ServerUID = os.Getenv("SERVER_UID")
+	if database.ServerUID == "" {
+		log.Fatal("missing env var SERVER_UID")
 	}
 
 	// Initialised the database connection.
