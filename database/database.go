@@ -14,7 +14,6 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
-	"go.sia.tech/siad/crypto"
 )
 
 const (
@@ -47,8 +46,6 @@ var (
 	// and it already exists there.
 	ErrSkylinkExists = errors.New("skylink already exists")
 
-	// Portal2 is the preferred portal to use, e.g. https://siasky.net
-	Portal2 string
 	// ServerDomain is the unique server name, e.g. eu-pol-4.siasky.net
 	ServerDomain string
 
@@ -168,7 +165,7 @@ func (db *DB) Close() error {
 // does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
 	// Ensure the hash is set
-	if skylink.Hash == (crypto.Hash{}) {
+	if skylink.Hash == (Hash{}) {
 		return errors.New("unexpected blocked skylink, 'hash' is not set")
 	}
 
@@ -197,8 +194,8 @@ func (db *DB) CreateAllowListedSkylink(ctx context.Context, skylink *AllowListed
 
 // FindByHash fetches the DB record that corresponds to the given hash
 // from the database.
-func (db *DB) FindByHash(ctx context.Context, hash crypto.Hash) (*BlockedSkylink, error) {
-	return db.findOne(ctx, bson.M{"hash": hash})
+func (db *DB) FindByHash(ctx context.Context, hash Hash) (*BlockedSkylink, error) {
+	return db.findOne(ctx, bson.M{"hash": hash.String()})
 }
 
 // IsAllowListed returns whether the given skylink is on the allow list.
@@ -215,12 +212,12 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 
 // MarkAsSucceeded will toggle the failed flag for all documents in the given
 // list of hashes that are currently marked as failed.
-func (db *DB) MarkAsSucceeded(hashes []crypto.Hash) error {
+func (db *DB) MarkAsSucceeded(hashes []Hash) error {
 	return db.updateFailedFlag(hashes, false)
 }
 
 // MarkAsFailed will mark the given documents as failed
-func (db *DB) MarkAsFailed(hashes []crypto.Hash) error {
+func (db *DB) MarkAsFailed(hashes []Hash) error {
 	return db.updateFailedFlag(hashes, true)
 }
 
@@ -250,7 +247,7 @@ func (db *DB) Purge(ctx context.Context) error {
 // block timestamp for this server which is retrieves from the DB. It scans all
 // blocked skylinks from the hour before that timestamp, too, in order to
 // protect against system clock float.
-func (db *DB) HashesToBlock() ([]crypto.Hash, error) {
+func (db *DB) HashesToBlock() ([]Hash, error) {
 	cutoff, err := db.LatestBlockTimestamp()
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to fetch the latest timestamp from the DB")
@@ -274,7 +271,7 @@ func (db *DB) HashesToBlock() ([]crypto.Hash, error) {
 	}
 
 	// Extract the hashes
-	hashes := make([]crypto.Hash, len(docs))
+	hashes := make([]Hash, len(docs))
 	for i, doc := range docs {
 		hashes[i] = doc.Hash
 	}
@@ -285,7 +282,7 @@ func (db *DB) HashesToBlock() ([]crypto.Hash, error) {
 // around. This is a retry mechanism to ensure we keep retrying to block those
 // hashes, but at the same try 'unblock' the main block loop in order for it
 // to run smoothly.
-func (db *DB) HashesToRetry() ([]crypto.Hash, error) {
+func (db *DB) HashesToRetry() ([]Hash, error) {
 	filter := bson.M{"failed": bson.M{"$eq": true}}
 	opts := options.Find()
 	opts.SetSort(bson.D{{"timestamp_added", 1}})
@@ -297,7 +294,7 @@ func (db *DB) HashesToRetry() ([]crypto.Hash, error) {
 	}
 
 	// Extract the hashes
-	hashes := make([]crypto.Hash, len(docs))
+	hashes := make([]Hash, len(docs))
 	for i, doc := range docs {
 		hashes[i] = doc.Hash
 	}
@@ -354,7 +351,7 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 		bson.D{{"$or", []interface{}{
 			bson.D{{"hash", nil}},
 			bson.D{{"hash", bson.M{"$exists": false}}},
-			bson.D{{"hash", crypto.Hash{}}},
+			bson.D{{"hash", Hash{}}},
 		}}},
 	}}}
 
@@ -395,10 +392,10 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 			bson.D{{"$or", []interface{}{
 				bson.D{{"hash", nil}},
 				bson.D{{"hash", bson.M{"$exists": false}}},
-				bson.D{{"hash", crypto.Hash{}}},
+				bson.D{{"hash", Hash{}}},
 			}}},
 		}}}
-		value := bson.M{"$set": bson.M{"hash": crypto.Hash(sl.MerkleRoot())}}
+		value := bson.M{"$set": bson.M{"hash": NewHash(sl)}}
 		_, err = collSkylinks.UpdateOne(ctx, filter, value)
 		if err != nil {
 			db.staticLogger.Errorf("failed to update hash of document with ID '%v', err %v", doc.ID, err)
@@ -418,6 +415,7 @@ func (db *DB) find(ctx context.Context, filter interface{},
 		return nil, nil
 	}
 	if err != nil {
+		panic(err)
 		return nil, err
 	}
 
@@ -451,7 +449,7 @@ func (db *DB) findOne(ctx context.Context, filter interface{},
 
 // updateFailedFlag is a helper method that updates the failed flag on the
 // documents that correspond with the skylinks in the given array.
-func (db *DB) updateFailedFlag(hashes []crypto.Hash, failed bool) error {
+func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
 	// return early if no hashes were given
 	if len(hashes) == 0 {
 		return nil

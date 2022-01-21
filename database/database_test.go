@@ -14,7 +14,6 @@ import (
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.sia.tech/siad/crypto"
 )
 
 // newTestDB creates a new database for a given test's name.
@@ -117,7 +116,7 @@ func testCreateBlockedSkylink(t *testing.T) {
 		t.Fatal("expected 'hash is not set' error", err)
 	}
 	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
-		Hash: crypto.HashBytes([]byte("somehash")),
+		Hash: HashBytes([]byte("somehash")),
 	})
 	if err != nil {
 		t.Fatal("unexpected error", err)
@@ -129,7 +128,7 @@ func testCreateBlockedSkylink(t *testing.T) {
 	if err != nil {
 		t.Fatal("unexpected error", err)
 	}
-	hash := crypto.Hash(sl.MerkleRoot())
+	hash := NewHash(sl)
 
 	// create a blocked skylink struct
 	now := time.Now().Round(time.Second).UTC()
@@ -229,7 +228,7 @@ func testMarkAsSucceeded(t *testing.T) {
 	defer db.Close()
 
 	// ensure 'MarkAsSucceeded' can handle an empty slice
-	var empty []crypto.Hash
+	var empty []Hash
 	err := db.MarkAsSucceeded(empty)
 	if err != nil {
 		t.Fatal(err)
@@ -238,14 +237,14 @@ func testMarkAsSucceeded(t *testing.T) {
 	// insert a regular document and one that was marked as failed
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_1",
-		Hash:           crypto.HashBytes([]byte("skylink_1")),
+		Hash:           HashBytes([]byte("skylink_1")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        "skylink_2",
-		Hash:           crypto.HashBytes([]byte("skylink_2")),
+		Hash:           HashBytes([]byte("skylink_2")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
@@ -286,23 +285,23 @@ func testMarkAsFailed(t *testing.T) {
 	defer db.Close()
 
 	// ensure 'MarkAsFailed' can handle an empty slice
-	var empty []crypto.Hash
+	var empty []Hash
 	err := db.MarkAsFailed(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// insert two regular documents
-	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
+	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Skylink:        "skylink_1",
-		Hash:           crypto.HashBytes([]byte("skylink_1")),
+		Hash:           HashBytes([]byte("skylink_1")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
-	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
+	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Skylink:        "skylink_2",
-		Hash:           crypto.HashBytes([]byte("skylink_2")),
+		Hash:           HashBytes([]byte("skylink_2")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
@@ -331,7 +330,7 @@ func testMarkAsFailed(t *testing.T) {
 	}
 
 	// mark all hashes as failed
-	hashes := make([]crypto.Hash, len(all))
+	hashes := make([]Hash, len(all))
 	for i, doc := range all {
 		hashes[i] = doc.Hash
 	}
@@ -372,7 +371,7 @@ func testCompatTransformSkylinkToHash(t *testing.T) {
 			bson.D{{"$or", []interface{}{
 				bson.D{{"hash", nil}},
 				bson.D{{"hash", bson.M{"$exists": false}}},
-				bson.D{{"hash", crypto.Hash{}}},
+				bson.D{{"hash", Hash{}}},
 			}}},
 		}}})
 		if err != nil {
@@ -415,7 +414,7 @@ func testCompatTransformSkylinkToHash(t *testing.T) {
 	// insert one documents with a skylink and a hash
 	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
 		Skylink:        sl3.String(),
-		Hash:           crypto.Hash(sl3.MerkleRoot()),
+		Hash:           NewHash(sl3),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().Add(time.Hour).UTC(),
@@ -449,21 +448,21 @@ func testCompatTransformSkylinkToHash(t *testing.T) {
 	if sl11.String() != sl1.String() {
 		t.Fatal("unexpected skylink value")
 	}
-	if crypto.Hash(sl11.MerkleRoot()) != skylinks[0].Hash {
-		t.Fatal("unexpected hash value", crypto.Hash(sl11.MerkleRoot()), skylinks[0].Hash)
+	if NewHash(sl11) != skylinks[0].Hash {
+		t.Fatal("unexpected hash value", NewHash(sl11), skylinks[0].Hash)
 	}
 	sl22 := skylinkFromString(skylinks[1].Skylink)
 	if sl22.String() != sl2.String() {
 		t.Fatal("unexpected skylink value")
 	}
-	if crypto.Hash(sl22.MerkleRoot()) != skylinks[1].Hash {
+	if NewHash(sl22) != skylinks[1].Hash {
 		t.Fatal("unexpected hash value")
 	}
 	sl33 := skylinkFromString(skylinks[2].Skylink)
 	if sl33.String() != sl3.String() {
 		t.Fatal("unexpected skylink value")
 	}
-	if crypto.Hash(sl33.MerkleRoot()) != skylinks[2].Hash {
+	if NewHash(sl33) != skylinks[2].Hash {
 		t.Fatal("unexpected hash value")
 	}
 }

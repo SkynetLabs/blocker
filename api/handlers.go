@@ -14,7 +14,6 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
-	"go.sia.tech/siad/crypto"
 )
 
 type (
@@ -217,7 +216,7 @@ func (api *API) block(ctx context.Context, bp BlockPOST, skylink skymodules.Skyl
 	// dropped.
 	bs := &database.BlockedSkylink{
 		Skylink: skylink.String(),
-		Hash:    crypto.Hash(skylink.MerkleRoot()),
+		Hash:    database.NewHash(skylink),
 		Reporter: database.Reporter{
 			Name:            bp.Reporter.Name,
 			Email:           bp.Reporter.Email,

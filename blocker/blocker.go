@@ -10,7 +10,6 @@ import (
 	"github.com/SkynetLabs/skynet-accounts/build"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
-	"go.sia.tech/siad/crypto"
 )
 
 const (
@@ -230,13 +229,13 @@ func (bl *Blocker) Start() {
 }
 
 // blockHashes blocks the given list of hashes.
-func (bl *Blocker) blockHashes(hashes []crypto.Hash) (succeeded int, failures int, err error) {
+func (bl *Blocker) blockHashes(hashes []database.Hash) (succeeded int, failures int, err error) {
 	batchSize := blockBatchSize
 	start := 0
 
 	// keep track of which skylinks were blocked and which ones failed
-	var blocked []crypto.Hash
-	var failed []crypto.Hash
+	var blocked []database.Hash
+	var failed []database.Hash
 
 	// defer a function that updates the database and sets return values
 	defer func() {

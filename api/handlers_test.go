@@ -14,7 +14,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.sia.tech/siad/crypto"
 )
 
 var (
@@ -153,7 +152,7 @@ func testHandleBlockRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := api.staticDB.FindByHash(ctx, crypto.Hash(sl.MerkleRoot()))
+	doc, err := api.staticDB.FindByHash(ctx, database.NewHash(sl))
 	if err != nil {
 		t.Fatal("unexpected error", err)
 	}
@@ -196,7 +195,7 @@ func testHandleBlockRequest(t *testing.T) {
 	}
 
 	// assert the blocked skylink made it into the database
-	doc, err = api.staticDB.FindByHash(ctx, crypto.Hash(sl.MerkleRoot()))
+	doc, err = api.staticDB.FindByHash(ctx, database.NewHash(sl))
 	if err != nil {
 		t.Fatal("unexpected error", err)
 	}

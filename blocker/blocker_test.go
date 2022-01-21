@@ -12,7 +12,6 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.sia.tech/siad/crypto"
 )
 
 // mockSkyd is a helper struct that implements the skyd API, all methods are
@@ -28,7 +27,7 @@ func (api *mockSkyd) BlockHashes(hashes []string) error {
 
 	// check whether the caller expects an error to be thrown
 	for _, h := range hashes {
-		if h == crypto.HashBytes([]byte("throwerror")).String() {
+		if h == database.HashBytes([]byte("throwerror")).String() {
 			return errors.New(unableToUpdateBlocklistErrStr)
 		}
 	}
@@ -89,18 +88,18 @@ func testBlockHashes(t *testing.T) {
 	// - all hashes in 1 batch
 	// - a batch size of 10, which still fails
 	// - all hashes in a batch size of 1, which returns the failing hash
-	var hashes []crypto.Hash
+	var hashes []database.Hash
 	var i int
 	for ; i < 9; i++ {
-		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
+		hash := database.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
 		hashes = append(hashes, hash)
 	}
 
 	// the last hash before the failure should be the latest timestamp set,
 	// so save this timestamp as an expected value for later
-	hashes = append(hashes, crypto.HashBytes([]byte("throwerror")))
+	hashes = append(hashes, database.HashBytes([]byte("throwerror")))
 	for ; i < 15; i++ {
-		hash := crypto.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
+		hash := database.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
 		hashes = append(hashes, hash)
 	}
 
