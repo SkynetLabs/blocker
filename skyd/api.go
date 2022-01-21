@@ -28,9 +28,7 @@ type API interface {
 	BlockHashes([]string) error
 	// IsSkydUp returns true if the skyd API instance is up.
 	IsSkydUp() bool
-	// ResolveSkylink tries to resolve the given skylink to a V1 skylink. This
-	// function will return the given skylink in case of an error, making it
-	// easy to override a skylink with its resolved value.
+	// ResolveSkylink tries to resolve the given skylink to a V1 skylink.
 	ResolveSkylink(skymodules.Skylink) (skymodules.Skylink, error)
 }
 
@@ -121,7 +119,7 @@ func (api *api) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, 
 	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", api.staticSkydHost, api.staticSkydPort, skylink.String())
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return skylink, errors.AddContext(err, "failed to build request to skyd")
+		return skymodules.Skylink{}, errors.AddContext(err, "failed to build request to skyd")
 	}
 
 	// set headers and execute the request
@@ -129,27 +127,31 @@ func (api *api) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, 
 	req.Header.Set("Authorization", api.staticAuthHeader())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return skylink, errors.AddContext(err, "failed to make request to skyd")
+		return skymodules.Skylink{}, errors.AddContext(err, "failed to make request to skyd")
 	}
 	defer resp.Body.Close()
 
-	// if the status code is 200 OK, extract the resolved skylink
-	if resp.StatusCode == http.StatusOK {
-		resolved := struct {
-			Skylink string
+	// if the status code is not 200 OK, try and extract the error and return it
+	if resp.StatusCode != http.StatusOK {
+		errorResponse := struct {
+			Message string `json:"message"`
 		}{}
-		err = json.NewDecoder(resp.Body).Decode(&resolved)
-		if err != nil {
-			return skylink, errors.AddContext(err, "bad response from skyd")
+		if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
+			return skymodules.Skylink{}, errors.AddContext(err, "unable to decode error response from skyd")
 		}
-		err = skylink.LoadString(resolved.Skylink)
-		if err != nil {
-			return skylink, errors.AddContext(err, "unable to decode resolved skylink")
-		}
-		return skylink, nil
+		return skymodules.Skylink{}, errors.New(errorResponse.Message)
 	}
 
-	// in all other cases simply return the original skylink
+	// decode the resolved skylink
+	resolved := struct {
+		Skylink string `json:"skylink"`
+	}{}
+	if err := json.NewDecoder(resp.Body).Decode(&resolved); err != nil {
+		return skymodules.Skylink{}, errors.AddContext(err, "unable to decode response from skyd")
+	}
+	if err := skylink.LoadString(resolved.Skylink); err != nil {
+		return skymodules.Skylink{}, errors.AddContext(err, "unable to load the resolved skylink")
+	}
 	return skylink, nil
 }
 

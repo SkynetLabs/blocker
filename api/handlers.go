@@ -177,9 +177,11 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 	_ = skylink.LoadString(string(bp.Skylink))
 
 	// Resolve the skylink
-	var err error
-	skylink, err = api.staticSkydAPI.ResolveSkylink(skylink)
-	if err != nil {
+	resolved, err := api.staticSkydAPI.ResolveSkylink(skylink)
+	if err == nil {
+		// replace the skylink with the resolved skylink
+		skylink = resolved
+	} else {
 		// in case of an error we log and continue with the given skylink
 		api.staticLogger.Errorf("failed to resolve skylink '%v', err: %v", skylink, err)
 	}
