@@ -44,5 +44,5 @@ This service depends on the following environment variables:
 * `SKYNET_DB_PASS`
 * `SKYNET_ACCOUNTS_HOST`, defaults to `accounts`
 * `SKYNET_ACCOUNTS_PORT`, defaults to `3000`
-* `SERVER_DOMAIN`, e.g. `eu-ger-5.siasky.net`
+* `SERVER_UID`, e.g. `94743e8e2673a176`
 * `BLOCKER_LOG_LEVEL`, defaults to `info`

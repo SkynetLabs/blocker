@@ -72,10 +72,10 @@ func main() {
 	}
 	logger.SetLevel(logLevel)
 
-	// Set the unique name of this server.
-	database.ServerDomain = os.Getenv("SERVER_DOMAIN")
-	if database.ServerDomain == "" {
-		log.Fatal("missing env var SERVER_DOMAIN")
+	// Set the unique id of this server.
+	database.ServerUID = os.Getenv("SERVER_UID")
+	if database.ServerUID == "" {
+		log.Fatal("missing env var SERVER_UID")
 	}
 
 	// Initialised the database connection.
