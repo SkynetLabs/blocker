@@ -19,7 +19,7 @@ type Hash struct {
 
 // NewHash returns the Hash of the given skylink.
 func NewHash(sl skymodules.Skylink) Hash {
-	return Hash{crypto.Hash(sl.MerkleRoot())}
+	return Hash{crypto.HashObject(sl.MerkleRoot())}
 }
 
 // HashBytes returns the Hash of the given bytes.
