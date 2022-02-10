@@ -415,7 +415,6 @@ func (db *DB) find(ctx context.Context, filter interface{},
 		return nil, nil
 	}
 	if err != nil {
-		panic(err)
 		return nil, err
 	}
 

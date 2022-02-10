@@ -16,6 +16,12 @@ import (
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 )
 
+var (
+	// maxBodySize defines the maximum size of the POST body when making request
+	// to the block endpoints
+	maxBodySize = int64(1 << 16) // 64kib
+)
+
 type (
 	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
@@ -103,7 +109,7 @@ func (api *API) healthGET(w http.ResponseWriter, r *http.Request, _ httprouter.P
 // to be done by means of 'authenticating' the caller.
 func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	// Protect against large bodies.
-	b := http.MaxBytesReader(w, r.Body, 1<<16) // 64 kib
+	b := http.MaxBytesReader(w, r.Body, maxBodySize)
 	defer b.Close()
 
 	// Parse the request.
@@ -115,7 +121,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	}
 
 	// Get the sub from the form
-	sub := r.Form.Get("sub")
+	sub := r.FormValue("sub")
 	if sub == "" {
 		// No sub. Maybe we didn't try to fetch it? Try now. Don't log errors.
 		u, err := UserFromReq(r, api.staticLogger)
@@ -135,7 +141,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 // us to more easily unblock a batch of links.
 func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	// Protect against large bodies.
-	b := http.MaxBytesReader(w, r.Body, 1<<16) // 64 kib
+	b := http.MaxBytesReader(w, r.Body, maxBodySize)
 	defer b.Close()
 
 	// Parse the request.
