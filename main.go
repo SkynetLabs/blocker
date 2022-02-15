@@ -6,11 +6,13 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/SkynetLabs/blocker/skyd"
+	"github.com/SkynetLabs/blocker/syncer"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
@@ -34,27 +36,6 @@ const (
 	// "NGINX_PORT" environment variables.
 	defaultNginxPort = 8000
 )
-
-// loadDBCredentials creates a new db connection based on credentials found in
-// the environment variables.
-func loadDBCredentials() (string, options.Credential, error) {
-	var creds options.Credential
-	var ok bool
-	if creds.Username, ok = os.LookupEnv("SKYNET_DB_USER"); !ok {
-		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_USER")
-	}
-	if creds.Password, ok = os.LookupEnv("SKYNET_DB_PASS"); !ok {
-		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PASS")
-	}
-	var host, port string
-	if host, ok = os.LookupEnv("SKYNET_DB_HOST"); !ok {
-		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_HOST")
-	}
-	if port, ok = os.LookupEnv("SKYNET_DB_PORT"); !ok {
-		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PORT")
-	}
-	return fmt.Sprintf("mongodb://%v:%v", host, port), creds, nil
-}
 
 func main() {
 	// Load the environment variables from the .env file.
@@ -130,13 +111,23 @@ func main() {
 	}
 
 	// Create the blocker.
-	blockerThread, err := blocker.New(ctx, skydAPI, db, logger)
+	bl, err := blocker.New(ctx, skydAPI, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
 
 	// Start blocker.
-	blockerThread.Start()
+	bl.Start()
+
+	// Create the syncer.
+	portalURLs := loadPortalURLs()
+	sync, err := syncer.New(ctx, bl, skydAPI, db, portalURLs, logger)
+	if err != nil {
+		log.Fatal(errors.AddContext(err, "failed to instantiate syncer"))
+	}
+
+	// Start the syncer.
+	sync.Start()
 
 	// Initialise the server.
 	server, err := api.New(skydAPI, db, logger)
@@ -146,4 +137,49 @@ func main() {
 
 	// TODO: Missing clean shutdown and database disconnect.
 	log.Fatal(server.ListenAndServe(4000))
+}
+
+// loadDBCredentials creates a new db connection based on credentials found in
+// the environment variables.
+func loadDBCredentials() (string, options.Credential, error) {
+	var creds options.Credential
+	var ok bool
+	if creds.Username, ok = os.LookupEnv("SKYNET_DB_USER"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_USER")
+	}
+	if creds.Password, ok = os.LookupEnv("SKYNET_DB_PASS"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PASS")
+	}
+	var host, port string
+	if host, ok = os.LookupEnv("SKYNET_DB_HOST"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_HOST")
+	}
+	if port, ok = os.LookupEnv("SKYNET_DB_PORT"); !ok {
+		return "", options.Credential{}, errors.New("missing env var SKYNET_DB_PORT")
+	}
+	return fmt.Sprintf("mongodb://%v:%v", host, port), creds, nil
+}
+
+// loadPortalURLs returns a slice of portal urls, configured in the environment
+// under the key BLOCKER_SYNC_PORTALS. The blocker will keep in sync the
+// blocklist from these portals with the local skyd instance.
+func loadPortalURLs() (portalURLs []string) {
+	portalURLStr := os.Getenv("BLOCKER_SYNC_PORTALS")
+	for _, portalURL := range strings.Split(portalURLStr, ",") {
+		portalURL = sanitizePortalURL(portalURL)
+		if portalURL != "" {
+			portalURLs = append(portalURLs, portalURL)
+		}
+	}
+	return
+}
+
+// sanitizePortalURL is a helper function that sanitizes the given input portal
+// URL, stripping away trailing slashes and ensuring it's prefixed with https.
+func sanitizePortalURL(portalURL string) string {
+	portalURL = strings.TrimSpace(portalURL)
+	portalURL = strings.TrimPrefix(portalURL, "https://")
+	portalURL = strings.TrimPrefix(portalURL, "http://")
+	portalURL = strings.TrimSuffix(portalURL, "/")
+	return fmt.Sprintf("https://%s", portalURL)
 }

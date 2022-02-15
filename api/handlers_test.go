@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.sia.tech/siad/crypto"
 )
 
 var (
@@ -29,6 +30,7 @@ type mockSkyd struct{}
 // the following methods are the implementation of the interface, it's
 // essentially all no-ops except for the resolver which resolves a predefined v2
 // skylink to its v1.
+func (api *mockSkyd) Blocklist() ([]crypto.Hash, error) { return nil, nil }
 func (api *mockSkyd) BlockHashes(hashes []string) error { return nil }
 func (api *mockSkyd) IsSkydUp() bool                    { return true }
 func (api *mockSkyd) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {

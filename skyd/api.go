@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
+	"go.sia.tech/siad/crypto"
 )
 
 const (
@@ -24,6 +25,8 @@ const (
 // API defines the skyd API interface. It's an interface for testing purposes,
 // as this allows to easily mock it and alleviates the need for a skyd instance.
 type API interface {
+	// Blocklist returns a list of hashes that make up the blocklist.
+	Blocklist() ([]crypto.Hash, error)
 	// BlockHashes adds the given hashes to the block list.
 	BlockHashes([]string) error
 	// IsSkydUp returns true if the skyd API instance is up.
@@ -66,6 +69,38 @@ func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skyd
 		staticDB:     db,
 		staticLogger: logger,
 	}, nil
+}
+
+// Blocklist returns a list of hashes that make up the blocklist.
+func (api *api) Blocklist() ([]crypto.Hash, error) {
+	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.staticSkydHost, api.staticSkydPort, skydTimeout)
+
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return nil, errors.AddContext(err, "failed to build blocklist request")
+	}
+
+	// set headers and execute the request
+	req.Header.Set("User-Agent", "Sia-Agent")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, errors.AddContext(err, "failed to fetch blocklist")
+	}
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			api.staticLogger.Errorf("failed to close the request body, err: %v", err)
+		}
+	}()
+
+	// decode the resolved skylink
+	var blocklist skyapi.SkynetBlocklistGET
+	err = json.NewDecoder(resp.Body).Decode(&blocklist)
+	if err != nil {
+		return nil, errors.AddContext(err, "unable to decode response from skyd")
+	}
+
+	return blocklist.Blocklist, nil
 }
 
 // BlockSkylinks will perform an API call to skyd to block the given skylinks

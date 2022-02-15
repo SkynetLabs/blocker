@@ -94,142 +94,8 @@ func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.
 	return bl, nil
 }
 
-// RetryFailedSkylinks fetches all blocked skylinks that failed to get blocked
-// the first time and retries them.
-func (bl *Blocker) RetryFailedSkylinks() error {
-	// Fetch hashes to retry
-	hashes, err := bl.staticDB.HashesToRetry()
-	if err != nil {
-		return err
-	}
-
-	// Escape early if there are none
-	if len(hashes) == 0 {
-		return nil
-	}
-
-	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", hashes)
-
-	// Retry the hashes
-	blocked, failed, err := bl.blockHashes(hashes)
-	if err != nil && !strings.Contains(err.Error(), unableToUpdateBlocklistErrStr) {
-		bl.staticLogger.Errorf("Failed to retry skylinks: %s", err)
-		return err
-	}
-
-	bl.staticLogger.Tracef("RetryFailedSkylinks blocked %v skylinks, and had %v failures", blocked, failed)
-
-	// NOTE: we purposefully do not update the latest block timestamp in the
-	// retry loop
-
-	return nil
-}
-
-// SweepAndBlock sweeps the DB for new skylinks, blocks them in skyd and writes
-// down the timestamp of the latest one, so it will scan from that moment
-// further on its next sweep.
-//
-// Note: It actually always scans one hour before the last timestamp in order to
-// avoid issues caused by clock desyncs.
-func (bl *Blocker) SweepAndBlock() error {
-	// Fetch hashes to block, return early if there are none
-	hashes, err := bl.staticDB.HashesToBlock()
-	if err != nil {
-		return err
-	}
-
-	// Escape early if there are none
-	if len(hashes) == 0 {
-		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
-	}
-
-	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", hashes)
-
-	// Block the hashes
-	blocked, failed, err := bl.blockHashes(hashes)
-	if err != nil {
-		bl.staticLogger.Errorf("Failed to block hashes: %s", err)
-		return err
-	}
-
-	bl.staticLogger.Tracef("SweepAndBlock blocked %v hashes, and had %v failures", blocked, failed)
-
-	// Update the latest block timestamp
-	err = bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
-	if err != nil && err != database.ErrNoEntriesUpdated {
-		bl.staticLogger.Tracef("SweepAndBlock failed to update timestamp: %s", err.Error())
-		return err
-	}
-	return nil
-}
-
-// Start launches a background task that periodically scans the database for
-// new skylink records and sends them for blocking.
-func (bl *Blocker) Start() {
-	// Start the blocking loop.
-	go func() {
-		// sleepLength defines how long the thread will sleep before scanning
-		// the next skylink. Its value is controlled by SweepAndBlock - while we
-		// keep finding files to scan, we'll keep this sleep at zero. Once we
-		// run out of files to scan we'll reset it to its full duration of
-		// sleepBetweenScans.
-		var sleepLength time.Duration
-		numSubsequentErrs := 0
-		for {
-			select {
-			case <-bl.staticCtx.Done():
-				return
-			case <-time.After(sleepLength):
-			}
-			err := bl.SweepAndBlock()
-			if errors.Contains(err, database.ErrNoDocumentsFound) {
-				// This was a successful call, so the number of subsequent
-				// errors is reset and we sleep for a pre-determined period
-				// in waiting for new skylinks to be uploaded.
-				sleepLength = sleepBetweenScans
-				numSubsequentErrs = 0
-			} else if err != nil {
-				numSubsequentErrs++
-				if numSubsequentErrs > sleepOnErrSteps {
-					numSubsequentErrs = sleepOnErrSteps
-				}
-				// On error, we sleep for an increasing amount of time -
-				// from 10 seconds  on the first error to 60 seconds on the
-				// sixth and subsequent errors.
-				sleepLength = sleepOnErrStep * time.Duration(numSubsequentErrs)
-			} else {
-				// A successful scan. Reset the number of subsequent errors.
-				numSubsequentErrs = 0
-				sleepLength = sleepBetweenScans
-			}
-			if err != nil {
-				bl.staticLogger.Debugf("SweepAndBlock error: %s", err.Error())
-			} else {
-				bl.staticLogger.Debugf("SweepAndBlock ran successfully.")
-			}
-		}
-	}()
-
-	// Start the retry loop.
-	go func() {
-		for {
-			select {
-			case <-bl.staticCtx.Done():
-				return
-			case <-time.After(retryInterval):
-			}
-			err := bl.RetryFailedSkylinks()
-			if err != nil {
-				bl.staticLogger.Debugf("RetryFailedSkylinks error: %s", err.Error())
-				continue
-			}
-			bl.staticLogger.Debugf("RetryFailedSkylinks ran successfully.")
-		}
-	}()
-}
-
-// blockHashes blocks the given list of hashes.
-func (bl *Blocker) blockHashes(hashes []database.Hash) (succeeded int, failures int, err error) {
+// BlockHashes blocks the given list of hashes.
+func (bl *Blocker) BlockHashes(hashes []database.Hash) (succeeded int, failures int, err error) {
 	batchSize := blockBatchSize
 	start := 0
 
@@ -311,4 +177,138 @@ func (bl *Blocker) blockHashes(hashes []database.Hash) (succeeded int, failures 
 		start = end
 	}
 	return
+}
+
+// RetryFailedSkylinks fetches all blocked skylinks that failed to get blocked
+// the first time and retries them.
+func (bl *Blocker) RetryFailedSkylinks() error {
+	// Fetch hashes to retry
+	hashes, err := bl.staticDB.HashesToRetry()
+	if err != nil {
+		return err
+	}
+
+	// Escape early if there are none
+	if len(hashes) == 0 {
+		return nil
+	}
+
+	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", hashes)
+
+	// Retry the hashes
+	blocked, failed, err := bl.BlockHashes(hashes)
+	if err != nil && !strings.Contains(err.Error(), unableToUpdateBlocklistErrStr) {
+		bl.staticLogger.Errorf("Failed to retry skylinks: %s", err)
+		return err
+	}
+
+	bl.staticLogger.Tracef("RetryFailedSkylinks blocked %v skylinks, and had %v failures", blocked, failed)
+
+	// NOTE: we purposefully do not update the latest block timestamp in the
+	// retry loop
+
+	return nil
+}
+
+// SweepAndBlock sweeps the DB for new skylinks, blocks them in skyd and writes
+// down the timestamp of the latest one, so it will scan from that moment
+// further on its next sweep.
+//
+// Note: It actually always scans one hour before the last timestamp in order to
+// avoid issues caused by clock desyncs.
+func (bl *Blocker) SweepAndBlock() error {
+	// Fetch hashes to block, return early if there are none
+	hashes, err := bl.staticDB.HashesToBlock()
+	if err != nil {
+		return err
+	}
+
+	// Escape early if there are none
+	if len(hashes) == 0 {
+		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
+	}
+
+	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", hashes)
+
+	// Block the hashes
+	blocked, failed, err := bl.BlockHashes(hashes)
+	if err != nil {
+		bl.staticLogger.Errorf("Failed to block hashes: %s", err)
+		return err
+	}
+
+	bl.staticLogger.Tracef("SweepAndBlock blocked %v hashes, and had %v failures", blocked, failed)
+
+	// Update the latest block timestamp
+	err = bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
+	if err != nil && err != database.ErrNoEntriesUpdated {
+		bl.staticLogger.Tracef("SweepAndBlock failed to update timestamp: %s", err.Error())
+		return err
+	}
+	return nil
+}
+
+// Start launches a background task that periodically scans the database for
+// new skylink records and sends them for blocking.
+func (bl *Blocker) Start() {
+	// Start the blocking loop.
+	go func() {
+		// sleepLength defines how long the thread will sleep before scanning
+		// the next skylink. Its value is controlled by SweepAndBlock - while we
+		// keep finding files to scan, we'll keep this sleep at zero. Once we
+		// run out of files to scan we'll reset it to its full duration of
+		// sleepBetweenScans.
+		var sleepLength time.Duration
+		numSubsequentErrs := 0
+		for {
+			select {
+			case <-bl.staticCtx.Done():
+				return
+			case <-time.After(sleepLength):
+			}
+			err := bl.SweepAndBlock()
+			if errors.Contains(err, database.ErrNoDocumentsFound) {
+				// This was a successful call, so the number of subsequent
+				// errors is reset and we sleep for a pre-determined period
+				// in waiting for new skylinks to be uploaded.
+				sleepLength = sleepBetweenScans
+				numSubsequentErrs = 0
+			} else if err != nil {
+				numSubsequentErrs++
+				if numSubsequentErrs > sleepOnErrSteps {
+					numSubsequentErrs = sleepOnErrSteps
+				}
+				// On error, we sleep for an increasing amount of time -
+				// from 10 seconds  on the first error to 60 seconds on the
+				// sixth and subsequent errors.
+				sleepLength = sleepOnErrStep * time.Duration(numSubsequentErrs)
+			} else {
+				// A successful scan. Reset the number of subsequent errors.
+				numSubsequentErrs = 0
+				sleepLength = sleepBetweenScans
+			}
+			if err != nil {
+				bl.staticLogger.Debugf("SweepAndBlock error: %s", err.Error())
+			} else {
+				bl.staticLogger.Debugf("SweepAndBlock ran successfully.")
+			}
+		}
+	}()
+
+	// Start the retry loop.
+	go func() {
+		for {
+			select {
+			case <-bl.staticCtx.Done():
+				return
+			case <-time.After(retryInterval):
+			}
+			err := bl.RetryFailedSkylinks()
+			if err != nil {
+				bl.staticLogger.Debugf("RetryFailedSkylinks error: %s", err.Error())
+				continue
+			}
+			bl.staticLogger.Debugf("RetryFailedSkylinks ran successfully.")
+		}
+	}()
 }

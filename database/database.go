@@ -243,6 +243,31 @@ func (db *DB) Purge(ctx context.Context) error {
 	return nil
 }
 
+// Hashes returns all hashes in our database that have not been marked as failed
+func (db *DB) Hashes() ([]Hash, error) {
+	// Find all documents
+	filter := bson.M{
+		"hash":   bson.M{"$ne": nil},
+		"failed": bson.M{"$ne": true},
+	}
+
+	opts := options.Find()
+	opts.SetSort(bson.D{{"timestamp_added", 1}})
+	opts.SetProjection(bson.D{{"hash", 1}})
+
+	docs, err := db.find(db.ctx, filter, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	// Extract the hashes
+	hashes := make([]Hash, len(docs))
+	for i, doc := range docs {
+		hashes[i] = doc.Hash
+	}
+	return hashes, nil
+}
+
 // HashesToBlock sweeps the database for unblocked hashes. It uses the latest
 // block timestamp for this server which is retrieves from the DB. It scans all
 // blocked skylinks from the hour before that timestamp, too, in order to
