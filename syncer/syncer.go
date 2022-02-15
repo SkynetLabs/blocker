@@ -54,6 +54,9 @@ func New(ctx context.Context, blocker *blocker.Blocker, skydAPI skyd.API, db *da
 	if ctx == nil {
 		return nil, errors.New("invalid context provided")
 	}
+	if blocker == nil {
+		return nil, errors.New("invalid blocker provided")
+	}
 	if db == nil {
 		return nil, errors.New("invalid DB provided")
 	}
