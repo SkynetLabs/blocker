@@ -13,22 +13,17 @@ and/or log files.
 
 # AllowList
 
-The blocker service can only block skylinks which are not in the allow list.
-To add a skylink to the allow list, one has to manually query the database and
+The blocker service can only block hashes which are not in the allow list.
+To add a hash to the allow list, one has to manually query the database and
 perform the follow operation:
 
 ```
 db.getCollection('allowlist').insertOne({
-  skylink: "[INSERT V1 SKYLINK HERE]",
-  description: "[INSERT SKYLINK DESCRIPTION]",
+  hash: "[INSERT HAHS OF V1 SKYLINK HERE]",
+  description: "[INSERT DESCRIPTION]",
   timestamp_added: new Date(),
 })
 ```
-
-The skylink is expected to be in the following form: `_B19BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1kaA`.
-So that's without portal and without the `sia://` prefix. The allow list is
-persisted as is, so not as a hash, for ease of use and because it is assumed the
-allowlist only holds non-abusive content.
 
 # Environment
 

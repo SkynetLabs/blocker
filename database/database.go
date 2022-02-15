@@ -10,6 +10,7 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
@@ -199,8 +200,14 @@ func (db *DB) FindByHash(ctx context.Context, hash Hash) (*BlockedSkylink, error
 }
 
 // IsAllowListed returns whether the given skylink is on the allow list.
-func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
-	res := db.staticAllowList.FindOne(ctx, bson.M{"skylink": skylink})
+func (db *DB) IsAllowListed(ctx context.Context, skylink, hash string) (bool, error) {
+	res := db.staticAllowList.FindOne(
+		ctx,
+		bson.D{{"$or", []interface{}{
+			bson.M{"skylink": skylink},
+			bson.M{"hash": hash},
+		}}},
+	)
 	if isDocumentNotFound(res.Err()) {
 		return false, nil
 	}
@@ -343,7 +350,13 @@ func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
 // the database to hashes. Skylinks should not be persisted in their plain form
 // in the database.
 func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
-	collSkylinks := db.staticDB.Collection(collSkylinks)
+	skylinks := db.staticDB.Collection(collSkylinks)
+
+	// define an inline type that defines a legacy mongo document with skylink
+	type blockedSkylinkCompat struct {
+		ID      primitive.ObjectID `bson:"_id,omitempty"`
+		Skylink string             `bson:"skylink"`
+	}
 
 	// define a filter that matches documents with skylink and no hash
 	filter := bson.D{{"$and", []interface{}{
@@ -356,9 +369,19 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 	}}}
 
 	// find all documents where the skyink has to be transformed to a hash
-	docs, err := db.find(ctx, filter)
+	c, err := skylinks.Find(ctx, filter)
+	if isDocumentNotFound(err) {
+		return nil
+	}
 	if err != nil {
-		return err
+		return errors.AddContext(err, "failed fetching documents that need to be transformed to having hashes instead of skylinks")
+	}
+
+	// hydrate the cursor into a list of compat objects
+	docs := make([]blockedSkylinkCompat, 0)
+	err = c.All(db.ctx, &docs)
+	if err != nil {
+		return errors.AddContext(err, "failed hydrating the cursor of documents into compat objects")
 	}
 
 	// return if no docs need to be transformed
@@ -396,7 +419,7 @@ func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
 			}}},
 		}}}
 		value := bson.M{"$set": bson.M{"hash": NewHash(sl)}}
-		_, err = collSkylinks.UpdateOne(ctx, filter, value)
+		_, err = skylinks.UpdateOne(ctx, filter, value)
 		if err != nil {
 			db.staticLogger.Errorf("failed to update hash of document with ID '%v', err %v", doc.ID, err)
 			continue

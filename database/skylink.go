@@ -65,7 +65,6 @@ type BlockedSkylink struct {
 	Reporter          Reporter           `bson:"reporter"`
 	Reverted          bool               `bson:"reverted"`
 	RevertedTags      []string           `bson:"reverted_tags"`
-	Skylink           string             `bson:"skylink"`
 	Tags              []string           `bson:"tags"`
 	TimestampAdded    time.Time          `bson:"timestamp_added"`
 	TimestampReverted time.Time          `bson:"timestamp_reverted"`
