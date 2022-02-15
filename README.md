@@ -19,7 +19,7 @@ perform the follow operation:
 
 ```
 db.getCollection('allowlist').insertOne({
-  hash: "[INSERT HAHS OF V1 SKYLINK HERE]",
+  hash: "[INSERT HASH OF V1 SKYLINK HERE]",
   description: "[INSERT DESCRIPTION]",
   timestamp_added: new Date(),
 })
