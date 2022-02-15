@@ -11,6 +11,14 @@ The blocker will convert the Skylink to a hash of its merkle root as soon as
 possible. This to prevent the persistence of abusive skylinks in the database
 and/or log files.
 
+# Sync
+
+A portal operator can bootstrap the blocklist by defining a set of portal urls
+in the environment variable `BLOCKER_PORTALS_SYNC`, which is a comma separated
+list of portal URLs. The blocker will periodically fetch the blocklist and
+compare it against the local database, it will add the missing hashes to the
+local database.
+
 # AllowList
 
 The blocker service can only block skylinks which are not in the allow list.
@@ -46,3 +54,4 @@ This service depends on the following environment variables:
 * `SKYNET_ACCOUNTS_PORT`, defaults to `3000`
 * `SERVER_UID`, e.g. `94743e8e2673a176`
 * `BLOCKER_LOG_LEVEL`, defaults to `info`
+* `BLOCKER_PORTALS_SYNC`

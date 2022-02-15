@@ -164,7 +164,7 @@ func loadDBCredentials() (string, options.Credential, error) {
 // under the key BLOCKER_SYNC_PORTALS. The blocker will keep in sync the
 // blocklist from these portals with the local skyd instance.
 func loadPortalURLs() (portalURLs []string) {
-	portalURLStr := os.Getenv("BLOCKER_SYNC_PORTALS")
+	portalURLStr := os.Getenv("BLOCKER_PORTALS_SYNC")
 	for _, portalURL := range strings.Split(portalURLStr, ",") {
 		portalURL = sanitizePortalURL(portalURL)
 		if portalURL != "" {
