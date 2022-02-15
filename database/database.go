@@ -506,8 +506,8 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	schema := map[string][]mongo.IndexModel{
 		collAllowlist: {
 			{
-				Keys:    bson.D{{"skylink", 1}},
-				Options: options.Index().SetName("skylink").SetUnique(true),
+				Keys:    bson.D{{"hash", 1}},
+				Options: options.Index().SetName("hash").SetUnique(true),
 			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
@@ -515,14 +515,9 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			},
 		},
 		collSkylinks: {
-			// TODO: the schema should be extended here to have a unique index
-			// on the 'hash' field, this can be done safely if the compat code
-			// has executed and the blocker has been running on hashes for a
-			// while, at that time the skylink index should be dropped and
-			// prevented from being set in the first place
 			{
-				Keys:    bson.D{{"skylink", 1}},
-				Options: options.Index().SetName("skylink").SetUnique(true),
+				Keys:    bson.D{{"hash", 1}},
+				Options: options.Index().SetName("hash").SetUnique(true),
 			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
@@ -564,6 +559,15 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	if icErr != nil {
 		return errors.Compose(icErr, ErrIndexCreateFailed)
 	}
+
+	// drop the old indices on 'skylink'
+	_, err1 := db.Collection(collAllowlist).Indexes().DropOne(ctx, "skylink")
+	_, err2 := db.Collection(collSkylinks).Indexes().DropOne(ctx, "skylink")
+	err := errors.Compose(err1, err2)
+	if err != nil {
+		return errors.AddContext(err, "failed droppping 'skylink' index")
+	}
+
 	return nil
 }
 
