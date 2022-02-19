@@ -16,8 +16,11 @@ import (
 
 var (
 	// AccountsHost is the host on which the accounts service is listening.
+	// NOTE: this variable is overwritten with what is set in the environment
 	AccountsHost = "accounts"
+
 	// AccountsPort is the port on which the accounts service is listening.
+	// NOTE: this variable is overwritten with what is set in the environment
 	AccountsPort = "3000"
 )
 

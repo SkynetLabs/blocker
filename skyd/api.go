@@ -13,6 +13,7 @@ import (
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
+	"gitlab.com/SkynetLabs/skyd/skymodules"
 )
 
 const (
@@ -23,12 +24,12 @@ const (
 // API defines the skyd API interface. It's an interface for testing purposes,
 // as this allows to easily mock it and alleviates the need for a skyd instance.
 type API interface {
-	// BlockSkylinks adds the given skylinks to the block list.
-	BlockSkylinks([]string) error
+	// BlockHashes adds the given hashes to the block list.
+	BlockHashes([]string) error
 	// IsSkydUp returns true if the skyd API instance is up.
 	IsSkydUp() bool
 	// ResolveSkylink tries to resolve the given skylink to a V1 skylink.
-	ResolveSkylink(string) (string, error)
+	ResolveSkylink(skymodules.Skylink) (skymodules.Skylink, error)
 }
 
 // api is a helper struct that exposes some methods that allow making skyd API
@@ -68,12 +69,12 @@ func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skyd
 }
 
 // BlockSkylinks will perform an API call to skyd to block the given skylinks
-func (api *api) BlockSkylinks(sls []string) error {
+func (api *api) BlockHashes(hashes []string) error {
 	// Build the call to skyd.
 	reqBody := skyapi.SkynetBlocklistPOST{
-		Add:    sls,
+		Add:    hashes,
 		Remove: nil,
-		IsHash: false,
+		IsHash: true,
 	}
 	reqBodyBytes, err := json.Marshal(reqBody)
 	if err != nil {
@@ -108,12 +109,17 @@ func (api *api) BlockSkylinks(sls []string) error {
 }
 
 // ResolveSkylink will resolve the given skylink.
-func (api *api) ResolveSkylink(skylink string) (string, error) {
+func (api *api) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
+	// no need to resolve the skylink if it's a v1 skylink
+	if skylink.IsSkylinkV1() {
+		return skylink, nil
+	}
+
 	// build the request to resolve the skylink with skyd
-	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", api.staticSkydHost, api.staticSkydPort, skylink)
+	url := fmt.Sprintf("http://%s:%d/skynet/resolve/%s", api.staticSkydHost, api.staticSkydPort, skylink.String())
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return skylink, errors.AddContext(err, "failed to build request to skyd")
+		return skymodules.Skylink{}, errors.AddContext(err, "failed to build request to skyd")
 	}
 
 	// set headers and execute the request
@@ -121,22 +127,31 @@ func (api *api) ResolveSkylink(skylink string) (string, error) {
 	req.Header.Set("Authorization", api.staticAuthHeader())
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return skylink, errors.AddContext(err, "failed to make request to skyd")
+		return skymodules.Skylink{}, errors.AddContext(err, "failed to make request to skyd")
 	}
 	defer resp.Body.Close()
 
-	// if the status code is 200 OK, extract the resolved skylink
-	if resp.StatusCode == http.StatusOK {
-		resolved := struct {
-			Skylink string
+	// if the status code is not 200 OK, try and extract the error and return it
+	if resp.StatusCode != http.StatusOK {
+		errorResponse := struct {
+			Message string `json:"message"`
 		}{}
-		err = json.NewDecoder(resp.Body).Decode(&resolved)
-		if err != nil {
-			return "", errors.AddContext(err, "bad response body from skyd")
+		if err := json.NewDecoder(resp.Body).Decode(&errorResponse); err != nil {
+			return skymodules.Skylink{}, errors.AddContext(err, "unable to decode error response from skyd")
 		}
-		return resolved.Skylink, nil
+		return skymodules.Skylink{}, errors.New(errorResponse.Message)
 	}
 
+	// decode the resolved skylink
+	resolved := struct {
+		Skylink string `json:"skylink"`
+	}{}
+	if err := json.NewDecoder(resp.Body).Decode(&resolved); err != nil {
+		return skymodules.Skylink{}, errors.AddContext(err, "unable to decode response from skyd")
+	}
+	if err := skylink.LoadString(resolved.Skylink); err != nil {
+		return skymodules.Skylink{}, errors.AddContext(err, "unable to load the resolved skylink")
+	}
 	return skylink, nil
 }
 

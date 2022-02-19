@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	// blockBatchSize is the max number of skylinks to be sent for blocking
-	// simultaneously.
+	// blockBatchSize is the max number of (skylink) hashes to be sent for
+	// blocking simultaneously.
 	blockBatchSize = 100
 
 	// blockBatchSizeDivisor is the divisor applied to the batch size when an
@@ -48,6 +48,7 @@ var (
 			Standard: time.Minute,
 		},
 	).(time.Duration)
+
 	// sleepOnErrStep defines the base step for sleeping after encountering an
 	// error. We'll increase the sleep by an order of magnitude on each
 	// subsequent error until sleepOnErrSteps. We'll multiply that by the number
@@ -96,21 +97,21 @@ func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.
 // RetryFailedSkylinks fetches all blocked skylinks that failed to get blocked
 // the first time and retries them.
 func (bl *Blocker) RetryFailedSkylinks() error {
-	// Fetch skylinks to retry
-	skylinks, err := bl.staticDB.SkylinksToRetry()
+	// Fetch hashes to retry
+	hashes, err := bl.staticDB.HashesToRetry()
 	if err != nil {
 		return err
 	}
 
 	// Escape early if there are none
-	if len(skylinks) == 0 {
+	if len(hashes) == 0 {
 		return nil
 	}
 
-	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", skylinksToString(skylinks))
+	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", hashes)
 
-	// Retry the skylinks
-	blocked, failed, err := bl.blockSkylinks(skylinks)
+	// Retry the hashes
+	blocked, failed, err := bl.blockHashes(hashes)
 	if err != nil && !strings.Contains(err.Error(), unableToUpdateBlocklistErrStr) {
 		bl.staticLogger.Errorf("Failed to retry skylinks: %s", err)
 		return err
@@ -131,27 +132,27 @@ func (bl *Blocker) RetryFailedSkylinks() error {
 // Note: It actually always scans one hour before the last timestamp in order to
 // avoid issues caused by clock desyncs.
 func (bl *Blocker) SweepAndBlock() error {
-	// Fetch skylinks to block, return early if there are none
-	skylinks, err := bl.staticDB.SkylinksToBlock()
+	// Fetch hashes to block, return early if there are none
+	hashes, err := bl.staticDB.HashesToBlock()
 	if err != nil {
 		return err
 	}
 
 	// Escape early if there are none
-	if len(skylinks) == 0 {
+	if len(hashes) == 0 {
 		return bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
 	}
 
-	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", skylinksToString(skylinks))
+	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", hashes)
 
-	// Block the skylinks
-	blocked, failed, err := bl.blockSkylinks(skylinks)
+	// Block the hashes
+	blocked, failed, err := bl.blockHashes(hashes)
 	if err != nil {
-		bl.staticLogger.Errorf("Failed to block skylinks: %s", err)
+		bl.staticLogger.Errorf("Failed to block hashes: %s", err)
 		return err
 	}
 
-	bl.staticLogger.Tracef("SweepAndBlock blocked %v skylinks, and had %v failures", blocked, failed)
+	bl.staticLogger.Tracef("SweepAndBlock blocked %v hashes, and had %v failures", blocked, failed)
 
 	// Update the latest block timestamp
 	err = bl.staticDB.SetLatestBlockTimestamp(time.Now().UTC())
@@ -227,14 +228,14 @@ func (bl *Blocker) Start() {
 	}()
 }
 
-// blockSkylinks blocks the given list of skylinks.
-func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded int, failures int, err error) {
+// blockHashes blocks the given list of hashes.
+func (bl *Blocker) blockHashes(hashes []database.Hash) (succeeded int, failures int, err error) {
 	batchSize := blockBatchSize
 	start := 0
 
 	// keep track of which skylinks were blocked and which ones failed
-	var blocked []database.BlockedSkylink
-	var failed []database.BlockedSkylink
+	var blocked []database.Hash
+	var failed []database.Hash
 
 	// defer a function that updates the database and sets return values
 	defer func() {
@@ -246,7 +247,7 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		failures = len(failed)
 	}()
 
-	for start < len(skylinks) {
+	for start < len(hashes) {
 		// check whether we need to escape
 		select {
 		case <-bl.staticCtx.Done():
@@ -263,19 +264,19 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 
 		// calculate the end of the batch range
 		end := start + batchSize
-		if end > len(skylinks) {
-			end = len(skylinks)
+		if end > len(hashes) {
+			end = len(hashes)
 		}
 
-		// grab all skylinks for this batch
+		// grab all skylink hashes for this batch
 		batch := make([]string, end-start)
-		for i, sl := range skylinks[start:end] {
-			batch[i] = sl.Skylink
+		for i, hash := range hashes[start:end] {
+			batch[i] = hash.String()
 		}
 
 		// send the batch to skyd, if an error occurs and the current batch size
 		// is greater than one, we simply retry with a smaller batch size
-		err = bl.staticSkydAPI.BlockSkylinks(batch)
+		err = bl.staticSkydAPI.BlockHashes(batch)
 
 		// if there's an error, and it's unrelated to the batch we sent, e.g.
 		// connection issue or something, we return here
@@ -294,7 +295,7 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		// if an error occurs add it to the failed array
 		if err != nil {
 			if len(batch) == 1 {
-				failed = append(failed, skylinks[start])
+				failed = append(failed, hashes[start])
 			} else {
 				bl.staticLogger.Errorf("Critical Developer Error, this code should only execute if the length of the batch equals one")
 			}
@@ -303,21 +304,11 @@ func (bl *Blocker) blockSkylinks(skylinks []database.BlockedSkylink) (succeeded 
 		// if no error occurred, add all skylinks from the batch to the
 		// array of blocked skylinks
 		if err == nil {
-			blocked = append(blocked, skylinks[start:end]...)
+			blocked = append(blocked, hashes[start:end]...)
 		}
 
 		// update start
 		start = end
 	}
 	return
-}
-
-// skylinksToString returns an array of skylinks as strings for the given
-// blocked skylinks array.
-func skylinksToString(skylinks []database.BlockedSkylink) []string {
-	sls := make([]string, len(skylinks))
-	for i, sl := range skylinks {
-		sls[i] = sl.Skylink
-	}
-	return sls
 }
