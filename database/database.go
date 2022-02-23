@@ -492,6 +492,10 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 				Keys:    bson.D{{"failed", 1}},
 				Options: options.Index().SetName("failed"),
 			},
+			{
+				Keys:    bson.D{{"invalid", 1}},
+				Options: options.Index().SetName("invalid"),
+			},
 		},
 	}
 
