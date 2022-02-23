@@ -23,7 +23,7 @@ var (
 	syncInterval = build.Select(
 		build.Var{
 			Dev:      time.Minute,
-			Testing:  time.Second,
+			Testing:  time.Minute,
 			Standard: 4 * time.Hour,
 		},
 	).(time.Duration)
@@ -83,26 +83,18 @@ func (s *Syncer) Start() {
 	// convenience variables
 	logger := s.staticLogger
 
-	// sync the local mongo database with skyd
-	err := s.syncDatabaseWithSkyd()
-	if err != nil {
-		logger.Errorf("Local sync failed with error: %s", err.Error())
+	// escape early if the syncer has no portal urls configured
+	if len(s.staticPortalURLs) == 0 {
+		logger.Infof("syncer is not being started because no portal URLs have been defined")
+		return
 	}
 
-	// start the sync loop.
+	// start the sync loop
 	go func() {
 		for {
-			// build a lookup table of existing hashes
-			existing, err := s.buildLookupTable()
-			if err == nil {
-				for _, portalURL := range s.staticPortalURLs {
-					err := s.syncPortalWithSkyd(portalURL, existing)
-					if err != nil {
-						logger.Errorf("Sync with %v failed with error: %s", portalURL, err)
-					}
-				}
-			} else {
-				logger.Errorf("could not build lookup table of existing hashes, error: %v", err)
+			err := s.syncPortalsWithSkyd()
+			if err != nil {
+				logger.Errorf("failed to sync portals with skyd, error %v", err)
 			}
 
 			select {
@@ -149,87 +141,72 @@ func (s *Syncer) blocklistFromPortal(portalURL string) ([]crypto.Hash, error) {
 	return br.Blocklist, nil
 }
 
-// buildLookupTable is a small helper function that fetches the blocklist from
-// the skyd API and turns it into a lookup table that can be used to see whether
-// a hash is part of the blocklist.
-func (s *Syncer) buildLookupTable() (lookupTable, error) {
+// syncPortalsWithSkyd will sync the blocklist of all portals defined on the
+// syncer with the local skyd.
+func (s *Syncer) syncPortalsWithSkyd() error {
+	// convenience variables
+	logger := s.staticLogger
+
+	// fetch skyd's current blocklist
 	blocklist, err := s.staticSkydAPI.Blocklist()
 	if err != nil {
-		return nil, err
+		return errors.AddContext(err, "could not fetch blocklist from local skyd")
 	}
-	lookup := make(map[crypto.Hash]struct{})
-	for _, hash := range blocklist {
-		lookup[hash] = struct{}{}
-	}
-	return lookup, nil
-}
-
-// syncDatabaseWithSkyd will diff the blocklist of the connected skyd with the
-// list of hashes in the database and add any missing hashes
-func (s *Syncer) syncDatabaseWithSkyd() error {
-	// convenience variables
-	logger := s.staticLogger
 
 	// build a lookup table of existing hashes
-	existing, err := s.buildLookupTable()
-	if err != nil {
-		return errors.AddContext(err, "could not build lookup table of existing hashes")
-	}
+	existing := buildLookupTable(blocklist)
 
-	// fetch all hashes from our database
-	hashes, err := s.staticDB.Hashes()
-	if err != nil {
-		return errors.AddContext(err, "could not get hashes from database")
-	}
+	// loop all portals and perform a sync
+	var errs []error
+	for _, portalURL := range s.staticPortalURLs {
+		logger.Infof("syncing blocklist for portal '%s'", portalURL)
 
-	// filter out all hashes which are already blocked by skyd
-	var curr int
-	for _, hash := range hashes {
-		if _, exists := existing[hash.Hash]; !exists {
-			hashes[curr] = hash
-			curr++
+		// fetch the blocklist from the portal
+		portalBlocklist, err := s.blocklistFromPortal(portalURL)
+		if err != nil {
+			return errors.AddContext(err, fmt.Sprintf("could not fetch blocklist from portal %s", portalURL))
 		}
-	}
-	hashes = hashes[:curr]
 
-	// use the blocker (has batching built in) to block the ones we are missing
-	added, _, err := s.staticBlocker.BlockHashes(hashes)
-	if err != nil {
-		return errors.AddContext(err, "could not block hashes")
+		// sync the blocklist with skyd
+		update := buildLookupTable(portalBlocklist)
+		added, err := s.syncBlocklistWithSkyd(existing, update)
+		if err != nil {
+			errs = append(errs, errors.AddContext(err, fmt.Sprintf("sync with portal '%v' failed", portalURL)))
+		}
+
+		logger.Infof("added %v hashes from portal '%s'", added, portalURL)
 	}
 
-	logger.Infof("successfully synced hashes in database with skyd, %v hashes added", added)
-	return nil
+	return errors.Compose(errs...)
 }
 
-// sync will loop through the preconfigured portals and pull their blocklist and
-// ensure all of the hashes on those blocklists are blocked in the local skyd
-// instance.
-func (s *Syncer) syncPortalWithSkyd(portalURL string, existing lookupTable) error {
-	// convenience variables
-	logger := s.staticLogger
-
-	logger.Infof("syncing blocklist for portal '%s'", portalURL)
-
-	// fetch the blocklist from the portal
-	hashes, err := s.blocklistFromPortal(portalURL)
-	if err != nil {
-		return errors.AddContext(err, fmt.Sprintf("failed getting blocklist from portal %s", portalURL))
-	}
-
+// syncBlocklistWithSkyd takes two lookup tables, one containing a mapping of
+// the hashes that currently exist in skyd, and one with the hashes of the
+// portal with which we are syncing. The diff is added to skyd.
+func (s *Syncer) syncBlocklistWithSkyd(existing, update lookupTable) (int, error) {
 	// filter out all hashes which are already blocked by skyd
 	var toAdd []database.Hash
-	for _, hash := range hashes {
+	for hash := range update {
 		if _, exists := existing[hash]; !exists {
 			toAdd = append(toAdd, database.Hash{Hash: hash})
 		}
 	}
 
-	added, _, err := s.staticBlocker.BlockHashes(toAdd)
+	// block the hashes
+	blocked, _, err := s.staticBlocker.BlockHashes(toAdd)
 	if err != nil {
-		return errors.AddContext(err, "failed to block hashes")
+		return 0, errors.AddContext(err, "failed to block hashes")
 	}
 
-	logger.Infof("added %v hashes from portal '%s'", added, portalURL)
-	return nil
+	return blocked, nil
+}
+
+// buildLookupTable is a small helper function that takes a list of hashes and
+// turns it into a lookup table.
+func buildLookupTable(hashes []crypto.Hash) lookupTable {
+	lookup := make(map[crypto.Hash]struct{})
+	for _, hash := range hashes {
+		lookup[hash] = struct{}{}
+	}
+	return lookup
 }

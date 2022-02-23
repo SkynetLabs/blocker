@@ -59,8 +59,6 @@ var (
 	collSkylinks = "skylinks"
 	// collAllowlist defines the name of the allowlist collection
 	collAllowlist = "allowlist"
-	// collLatestBlockTimestamps collLatestBlockTimestamps
-	collLatestBlockTimestamps = "latest_block_timestamps"
 )
 
 // DB holds a connection to the database, as well as helpful shortcuts to
@@ -210,15 +208,40 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 	return true, nil
 }
 
+// MarkAsFailed will mark the given documents as failed
+func (db *DB) MarkAsFailed(hashes []Hash) error {
+	return db.updateFailedFlag(hashes, true)
+}
+
+// MarkAsInvalid will mark the given documents as invalid
+func (db *DB) MarkAsInvalid(hashes []Hash) error {
+	// return early if no hashes were given
+	if len(hashes) == 0 {
+		return nil
+	}
+
+	// create the filter
+	filter := bson.M{
+		"hash": bson.M{"$in": hashes},
+	}
+
+	// define the update
+	update := bson.M{
+		"$set": bson.M{
+			"invalid": True,
+		},
+	}
+
+	// perform the update
+	collSkylinks := db.staticDB.Collection(collSkylinks)
+	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	return err
+}
+
 // MarkAsSucceeded will toggle the failed flag for all documents in the given
 // list of hashes that are currently marked as failed.
 func (db *DB) MarkAsSucceeded(hashes []Hash) error {
 	return db.updateFailedFlag(hashes, false)
-}
-
-// MarkAsFailed will mark the given documents as failed
-func (db *DB) MarkAsFailed(hashes []Hash) error {
-	return db.updateFailedFlag(hashes, true)
 }
 
 // Ping sends a ping command to verify that the client can connect to the DB and
@@ -252,7 +275,6 @@ func (db *DB) Hashes() ([]Hash, error) {
 	}
 
 	opts := options.Find()
-	opts.SetSort(bson.D{{"timestamp_added", 1}})
 	opts.SetProjection(bson.D{{"hash", 1}})
 
 	docs, err := db.find(db.ctx, filter, opts)
@@ -268,26 +290,15 @@ func (db *DB) Hashes() ([]Hash, error) {
 	return hashes, nil
 }
 
-// HashesToBlock sweeps the database for unblocked hashes. It uses the latest
-// block timestamp for this server which is retrieves from the DB. It scans all
-// blocked skylinks from the hour before that timestamp, too, in order to
-// protect against system clock float.
-func (db *DB) HashesToBlock() ([]Hash, error) {
-	cutoff, err := db.LatestBlockTimestamp()
-	if err != nil {
-		return nil, errors.AddContext(err, "failed to fetch the latest timestamp from the DB")
-	}
-	// Push cutoff one hour into the past in order to compensate of any
-	// potential system time drift.
-	cutoff = cutoff.Add(-time.Hour)
-	db.staticLogger.Tracef("HashesToBlock: fetching all hashes added after cutoff of %s", cutoff.String())
-
+// HashesToBlock sweeps the database for unblocked hashes after the given
+// timestamp.
+func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
 	filter := bson.M{
-		"timestamp_added": bson.M{"$gt": cutoff},
+		"timestamp_added": bson.M{"$gte": from},
 		"failed":          bson.M{"$ne": true},
+		"invalid":         bson.M{"$ne": true},
 	}
 	opts := options.Find()
-	opts.SetSort(bson.D{{"timestamp_added", 1}})
 	opts.SetProjection(bson.D{{"hash", 1}})
 
 	docs, err := db.find(db.ctx, filter, opts)
@@ -308,9 +319,11 @@ func (db *DB) HashesToBlock() ([]Hash, error) {
 // hashes, but at the same try 'unblock' the main block loop in order for it
 // to run smoothly.
 func (db *DB) HashesToRetry() ([]Hash, error) {
-	filter := bson.M{"failed": bson.M{"$eq": true}}
+	filter := bson.M{
+		"failed":  bson.M{"$eq": true},
+		"invalid": bson.M{"$ne": true},
+	}
 	opts := options.Find()
-	opts.SetSort(bson.D{{"timestamp_added", 1}})
 	opts.SetProjection(bson.D{{"hash", 1}})
 
 	docs, err := db.find(db.ctx, filter, opts)
@@ -324,44 +337,6 @@ func (db *DB) HashesToRetry() ([]Hash, error) {
 		hashes[i] = doc.Hash
 	}
 	return hashes, nil
-}
-
-// LatestBlockTimestamp returns the timestamp (timestampAdded) of the latest
-// skylink that was blocked. When fetching new SkylinksToBlock we should start
-// from that timestamp (and one hour before that).
-func (db *DB) LatestBlockTimestamp() (time.Time, error) {
-	sr := db.staticDB.Collection(collLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerUID})
-	if sr.Err() != nil && sr.Err() != mongo.ErrNoDocuments {
-		return time.Time{}, sr.Err()
-	}
-	if sr.Err() == mongo.ErrNoDocuments {
-		return time.Time{}, nil
-	}
-	var payload struct {
-		LatestBlock time.Time `bson:"latest_block"`
-	}
-	err := sr.Decode(&payload)
-	if err != nil {
-		return time.Time{}, errors.AddContext(err, "failed to deserialize the value from the DB")
-	}
-	return payload.LatestBlock, nil
-}
-
-// SetLatestBlockTimestamp sets the timestamp (timestampAdded) of the latest
-// skylink that was blocked. When fetching new SkylinksToBlock we should start
-// from that timestamp (and one hour before that).
-func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
-	filter := bson.M{"server_name": ServerUID}
-	value := bson.M{"$set": bson.M{"server_name": ServerUID, "latest_block": t}}
-	opts := options.UpdateOptions{Upsert: &True}
-	ur, err := db.staticDB.Collection(collLatestBlockTimestamps).UpdateOne(db.ctx, filter, value, &opts)
-	if err != nil {
-		return errors.AddContext(err, "failed to update")
-	}
-	if ur.ModifiedCount+ur.UpsertedCount == 0 {
-		return ErrNoEntriesUpdated
-	}
-	return nil
 }
 
 // compatTransformSkylinkToHash is some compat code that transforms skylinks in
@@ -440,7 +415,6 @@ func (db *DB) find(ctx context.Context, filter interface{},
 		return nil, nil
 	}
 	if err != nil {
-		panic(err)
 		return nil, err
 	}
 
@@ -484,6 +458,11 @@ func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
 	filter := bson.M{
 		"hash":   bson.M{"$in": hashes},
 		"failed": bson.M{"$eq": !failed},
+
+		// just to be on the safe side we ensure we never update invalid
+		// documents, the filters that fetch documents do this as well so this
+		// is only here to keep the database as clean as possible
+		"invalid": bson.M{"$eq": false},
 	}
 
 	// define the update
@@ -534,12 +513,6 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			{
 				Keys:    bson.D{{"failed", 1}},
 				Options: options.Index().SetName("failed"),
-			},
-		},
-		collLatestBlockTimestamps: {
-			{
-				Keys:    bson.D{{"server_name", 1}},
-				Options: options.Index().SetName("server_name").SetUnique(true),
 			},
 		},
 	}

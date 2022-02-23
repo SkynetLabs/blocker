@@ -48,6 +48,26 @@ func (h *Hash) UnmarshalBSONValue(t bsontype.Type, b []byte) error {
 	return nil
 }
 
+// DiffHashes is a helper function that returns an array of hashes that are part
+// of the base array but are not present in any of the other arrays.
+func DiffHashes(array []Hash, others ...[]Hash) []Hash {
+	// build a map of hashes to exclude
+	seen := make(map[string]struct{})
+	for _, other := range others {
+		for _, hash := range other {
+			seen[hash.String()] = struct{}{}
+		}
+	}
+
+	var diff []Hash
+	for _, hash := range array {
+		if _, exists := seen[hash.String()]; !exists {
+			diff = append(diff, hash)
+		}
+	}
+	return diff
+}
+
 // AllowListedSkylink is a skylink that is allow listed and thus prohibited from
 // ever being blocked.
 type AllowListedSkylink struct {
@@ -62,6 +82,7 @@ type BlockedSkylink struct {
 	ID                primitive.ObjectID `bson:"_id,omitempty"`
 	Failed            bool               `bson:"failed"`
 	Hash              Hash               `bson:"hash"`
+	Invalid           bool               `bson:"invalid"`
 	Reporter          Reporter           `bson:"reporter"`
 	Reverted          bool               `bson:"reverted"`
 	RevertedTags      []string           `bson:"reverted_tags"`

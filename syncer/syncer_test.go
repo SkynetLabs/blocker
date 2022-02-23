@@ -2,7 +2,9 @@ package syncer
 
 import (
 	"context"
+	"crypto/rand"
 	"io/ioutil"
+	"sync"
 	"testing"
 	"time"
 
@@ -10,8 +12,10 @@ import (
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
+	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.sia.tech/siad/build"
 	"go.sia.tech/siad/crypto"
 )
 
@@ -19,22 +23,21 @@ import (
 // essentially a no-op except for 'Blocklist' which returns a hardcoded list of
 // hashes and 'BlockHashes' which registers the request.
 type mockSkyd struct {
-	BlockHashesReqs [][]string
+	blockHashesReqs [][]database.Hash
+	mu              sync.Mutex
 }
 
 // Blocklist returns a list of hashes that make up the blocklist.
 func (api *mockSkyd) Blocklist() ([]crypto.Hash, error) {
-	var h1 crypto.Hash
-	var h2 crypto.Hash
-	h1.LoadString("44808a868caa2073e04dbae82919d0ba1f3c91d7cf121c9401cb893884aad677")
-	h2.LoadString("54b34c72416b8c2ed4f9364478f209add63e9d9fd0b2065e883c8758de298440")
-	return []crypto.Hash{h1, h2}, nil
+	return []crypto.Hash{randomHash()}, nil
 }
 
 // BlockHashes adds the given hashes to the block list.
-func (api *mockSkyd) BlockHashes(hashes []string) error {
-	api.BlockHashesReqs = append(api.BlockHashesReqs, hashes)
-	return nil
+func (api *mockSkyd) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
+	api.mu.Lock()
+	defer api.mu.Unlock()
+	api.blockHashesReqs = append(api.blockHashesReqs, hashes)
+	return hashes, nil, nil
 }
 
 // IsSkydUp returns true if the skyd API instance is up.
@@ -55,72 +58,14 @@ func TestSyncer(t *testing.T) {
 
 	t.Run("blocklistFromPortal", testBlocklistFromPortal)
 	t.Run("buildLookupTable", testBuildLookupTable)
-	t.Run("syncDatabaseWithSkyd", testSyncDatabaseWithSkyd)
+	t.Run("randomHash", testRandomHash)
+	t.Run("start", testStart)
+	t.Run("syncBlocklistWithSkyd", testSyncBlocklistWithSkyd)
 }
 
-// testBlocklistFromPortal is a unit test for the 'blocklistFromPortal' on the
-// Syncer.
+// testBlocklistFromPortal is an integration test that fetches the blocklist
+// from siasky.net
 func testBlocklistFromPortal(t *testing.T) {
-	// create a context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	// create a test syncer
-	s, err := newTestSyncer(ctx, &mockSkyd{}, "testBlocklistFromPortal")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// assert the blocklist is not empty
-	bl, err := s.blocklistFromPortal("https://siasky.net")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(bl) == 0 {
-		t.Fatal("expected the blocklist to contain hashes")
-	}
-}
-
-// testBuildLookupTable is a small unit test that covers the functionality of
-// the 'buildLookupTable' on the syncer.
-func testBuildLookupTable(t *testing.T) {
-	// create a context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	// create a test syncer
-	s, err := newTestSyncer(ctx, &mockSkyd{}, "testBuildLookupTable")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// build lookup table and assert its values
-	lt, err := s.buildLookupTable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(lt) == 0 {
-		t.Fatal("expected lookup table to not be empty")
-	}
-
-	var h1 crypto.Hash
-	h1.LoadString("44808a868caa2073e04dbae82919d0ba1f3c91d7cf121c9401cb893884aad677")
-	_, exists := lt[h1]
-	if !exists {
-		t.Fatal("expected h1 to be present in the blocklist")
-	}
-
-	var h2 crypto.Hash
-	h2.LoadString("f221dfd7810b5ad0a2e4fda681591c87d30de74f3f94383bae13a265aa7948b9")
-	_, exists = lt[h2]
-	if exists {
-		t.Fatal("expected h2 to not be present in the blocklist")
-	}
-}
-
-// testSyncDatabaseWithSkyd is a unit test that verifies the functionality of
-// the 'syncDatabaseWithSkyd' method on the Syncer.
-func testSyncDatabaseWithSkyd(t *testing.T) {
 	// create a context
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -129,52 +74,153 @@ func testSyncDatabaseWithSkyd(t *testing.T) {
 	skyd := &mockSkyd{}
 
 	// create a test syncer
-	s, err := newTestSyncer(ctx, skyd, "testBuildLookupTable")
+	s, err := newTestSyncer(ctx, skyd, "testSyncBlocklistWithSkyd")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// create a hash
-	var sl skymodules.Skylink
-	sl.LoadString("_AmG887cMbafNzBnUhhzELVuiiqv5yY9AFtnOgwzCcA1Dg")
-	hash := database.NewHash(sl)
-
-	// fetch the lookup table and assert our hash is not on it
-	lt, err := s.buildLookupTable()
+	// fetch the blocklist and assert it's not empty
+	blocklist, err := s.blocklistFromPortal("https://siasky.net")
 	if err != nil {
-		t.Fatal(err)
+		t.Fatal("unexpected error occurred fetching blocklist from siasky.net", err)
 	}
-	_, exists := lt[hash.Hash]
+	if len(blocklist) == 0 {
+		t.Fatal("expected blocklist to be non empty", len(blocklist))
+	}
+}
+
+// testBuildLookupTable is a small unit test that covers the functionality of
+// the 'buildLookupTable' helper.
+func testBuildLookupTable(t *testing.T) {
+	// create three random hashes
+	h1 := randomHash()
+	h2 := randomHash()
+	h3 := randomHash()
+
+	// base case
+	lt := buildLookupTable(nil)
+	if len(lt) != 0 {
+		t.Fatal("expected lookup table to not be empty")
+	}
+
+	// rebuild a lookup table with two hashes
+	lt = buildLookupTable([]crypto.Hash{h1, h2})
+
+	// assert the first two hashes exists and the third one does not
+	_, exists := lt[h1]
+	if !exists {
+		t.Fatal("expected lookup table to contain h1")
+	}
+	_, exists = lt[h2]
+	if !exists {
+		t.Fatal("expected lookup table to contain h2")
+	}
+	_, exists = lt[h3]
 	if exists {
-		t.Fatal("expected hash to not be on Skyd's blocklist")
+		t.Fatal("expected lookup table to not contain h3")
 	}
+}
 
-	// insert the hash into our database
-	bs := &database.BlockedSkylink{
-		Skylink:        sl.String(),
-		Hash:           hash,
-		TimestampAdded: time.Now().UTC(),
+// testRandomHash is a small unit test for the randomHash helper
+func testRandomHash(t *testing.T) {
+	var empty crypto.Hash
+	if empty.String() == randomHash().String() {
+		t.Fatal("expected random hash to be different from an empty hash")
 	}
-	err = s.staticDB.CreateBlockedSkylink(ctx, bs)
+}
+
+// testStart is an integration test that syncs siasky.net's blocklist with our
+// mock skyd instance
+func testStart(t *testing.T) {
+	// create a context
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	// create a mock of skyd
+	skyd := &mockSkyd{}
+
+	// create a test syncer
+	s, err := newTestSyncer(ctx, skyd, "testSyncBlocklistWithSkyd")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// execute a sync
-	err = s.syncDatabaseWithSkyd()
+	s.staticPortalURLs = []string{"https://siasky.net"}
+
+	// start the syncer
+	s.Start()
+
+	// check in a loop whether we've synced at least once
+	err = build.Retry(100, 100*time.Millisecond, func() error {
+		skyd.mu.Lock()
+		numRequests := len(skyd.blockHashesReqs)
+		skyd.mu.Unlock()
+		if numRequests > 0 {
+			return nil
+		}
+		return errors.New("no block requests received yet")
+	})
+	if err != nil {
+		t.Fatal("unexpected error", err)
+	}
+
+	// assert there's at least one request with 'batchsize' hashes
+	skyd.mu.Lock()
+	defer skyd.mu.Unlock()
+	requests := skyd.blockHashesReqs
+	if len(requests[0]) != blocker.BlockBatchSize {
+		t.Fatal("expected at least one block request that submitted 'batchsize' hashes")
+	}
+}
+
+// testSyncBlocklistWithSkyd is a unit test for the 'syncBlocklistWithSkyd' on
+// the Syncer.
+func testSyncBlocklistWithSkyd(t *testing.T) {
+	// create a context
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	// create a mock of skyd
+	skyd := &mockSkyd{}
+
+	// create a test syncer
+	s, err := newTestSyncer(ctx, skyd, "testSyncBlocklistWithSkyd")
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// assert the block request
-	if len(skyd.BlockHashesReqs) != 1 {
-		t.Fatalf("unexpected amount of block requests made, %v != 1", len(skyd.BlockHashesReqs))
+	// fetch skyd's blocklist
+	hashes, err := skyd.Blocklist()
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(skyd.BlockHashesReqs[0]) != 1 {
-		t.Fatalf("unexpected amount of hashes in block request, %v != 1", len(skyd.BlockHashesReqs[0]))
+
+	// build the existing lookup table
+	existing := buildLookupTable(hashes)
+
+	// fake an update which contains one unknown hash
+	hash := randomHash()
+	hashes = append(hashes, hash)
+	update := buildLookupTable(hashes)
+
+	// sync the diff with skyd
+	added, err := s.syncBlocklistWithSkyd(existing, update)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if skyd.BlockHashesReqs[0][0] != hash.String() {
-		t.Fatalf("unexpected hash in block request, %v != %v", skyd.BlockHashesReqs[0][0], hash.String())
+	if added != 1 {
+		t.Fatal("expected one hash to get added")
+	}
+
+	// assert the received block request in skyd
+	if len(skyd.blockHashesReqs) != 1 {
+		t.Fatal("expected one call to skyd's block endpoint")
+	}
+	if len(skyd.blockHashesReqs[0]) != 1 {
+		t.Fatal("expected one hash to be added")
+	}
+	if skyd.blockHashesReqs[0][0].String() != hash.String() {
+		t.Fatalf("expected %v to get added, but instead it was %v", hash.String(), skyd.blockHashesReqs[0][0].String())
 	}
 }
 
@@ -207,4 +253,11 @@ func newTestSyncer(ctx context.Context, skydAPI skyd.API, dbName string) (*Synce
 
 	// create a syncer
 	return New(ctx, b, skydAPI, db, nil, logger)
+}
+
+// randomHash returns a random hash
+func randomHash() crypto.Hash {
+	var h crypto.Hash
+	rand.Read(h[:])
+	return h
 }

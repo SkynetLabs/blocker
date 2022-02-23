@@ -178,8 +178,10 @@ func loadPortalURLs() (portalURLs []string) {
 // URL, stripping away trailing slashes and ensuring it's prefixed with https.
 func sanitizePortalURL(portalURL string) string {
 	portalURL = strings.TrimSpace(portalURL)
-	portalURL = strings.TrimPrefix(portalURL, "https://")
-	portalURL = strings.TrimPrefix(portalURL, "http://")
 	portalURL = strings.TrimSuffix(portalURL, "/")
+	if strings.HasPrefix(portalURL, "https://") {
+		return portalURL
+	}
+	portalURL = strings.TrimPrefix(portalURL, "http://")
 	return fmt.Sprintf("https://%s", portalURL)
 }

@@ -67,6 +67,10 @@ func TestDatabase(t *testing.T) {
 			test: testMarkAsFailed,
 		},
 		{
+			name: "MarkAsInvalid",
+			test: testMarkAsInvalid,
+		},
+		{
 			name: "compatTransformSkylinkToHash",
 			test: testCompatTransformSkylinkToHash,
 		},
@@ -291,7 +295,7 @@ func testMarkAsFailed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// insert two regular documents
+	// insert two regular documents and one invalid one
 	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Skylink:        "skylink_1",
 		Hash:           HashBytes([]byte("skylink_1")),
@@ -305,6 +309,14 @@ func testMarkAsFailed(t *testing.T) {
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
+	})
+	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Skylink:        "skylink_3",
+		Hash:           HashBytes([]byte("skylink_3")),
+		Reporter:       Reporter{},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+		Invalid:        true,
 	})
 
 	// fetch a cursor that holds all docs
@@ -348,7 +360,84 @@ func testMarkAsFailed(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 2", len(toRetry))
 	}
 
+	// the above tests asserted that both 'HashesToRetry' and 'MarkAsFailed'
+	// both handle invalid documents properly
+
 	// no need to mark them as succeeded, the other unit test covers that
+}
+
+// testMarkAsInvalid is a unit test that covers the functionality of the
+// 'MarkAsInvalid' method on the database.
+func testMarkAsInvalid(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// ensure 'MarkAsInvalid' can handle an empty slice
+	var empty []Hash
+	err := db.MarkAsInvalid(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// insert a regular document
+	hash := HashBytes([]byte("skylink_1"))
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Skylink:        "skylink_1",
+		Hash:           hash,
+		Reporter:       Reporter{},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert there's one hash that needs to be blocked
+	toBlock, err := db.HashesToBlock(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 1 {
+		t.Fatalf("expected 1 hash, instead it was %v", len(toBlock))
+	}
+
+	// assert the document is not marked as invalid
+	bsl, err := db.FindByHash(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bsl.Invalid {
+		t.Fatal("expected invalid to be false")
+	}
+
+	// mark it as invalid
+	err = db.MarkAsInvalid([]Hash{hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert the document is marked as invalid
+	bsl, err = db.FindByHash(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bsl.Invalid {
+		t.Fatal("expected invalid to be true")
+	}
+
+	// assert 'HashesToBlock' excludes invalid documents
+	toBlock, err = db.HashesToBlock(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 0 {
+		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
+	}
 }
 
 // testCompatTransformSkylinkToHash is a unit test that verifies the correct
@@ -434,7 +523,6 @@ func testCompatTransformSkylinkToHash(t *testing.T) {
 
 	// find all skylink documents, in order
 	opts := options.Find()
-	opts.SetSort(bson.D{{"timestamp_added", 1}})
 	skylinks, err := db.find(ctx, bson.D{}, opts)
 	if err != nil {
 		t.Fatal(err)
