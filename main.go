@@ -183,5 +183,8 @@ func sanitizePortalURL(portalURL string) string {
 		return portalURL
 	}
 	portalURL = strings.TrimPrefix(portalURL, "http://")
+	if portalURL == "" {
+		return portalURL
+	}
 	return fmt.Sprintf("https://%s", portalURL)
 }
