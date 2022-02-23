@@ -269,6 +269,7 @@ func (db *DB) Purge(ctx context.Context) error {
 // HashesToBlock sweeps the database for unblocked hashes after the given
 // timestamp.
 func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
+	// NOTE: $ne: true is not the same as $eq: false
 	filter := bson.M{
 		"timestamp_added": bson.M{"$gte": from},
 		"failed":          bson.M{"$ne": true},
@@ -295,6 +296,7 @@ func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
 // hashes, but at the same try 'unblock' the main block loop in order for it
 // to run smoothly.
 func (db *DB) HashesToRetry() ([]Hash, error) {
+	// NOTE: $ne: true is not the same as $eq: false
 	filter := bson.M{
 		"failed":  bson.M{"$eq": true},
 		"invalid": bson.M{"$ne": true},
