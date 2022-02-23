@@ -266,30 +266,6 @@ func (db *DB) Purge(ctx context.Context) error {
 	return nil
 }
 
-// Hashes returns all hashes in our database that have not been marked as failed
-func (db *DB) Hashes() ([]Hash, error) {
-	// Find all documents
-	filter := bson.M{
-		"hash":   bson.M{"$ne": nil},
-		"failed": bson.M{"$ne": true},
-	}
-
-	opts := options.Find()
-	opts.SetProjection(bson.D{{"hash", 1}})
-
-	docs, err := db.find(db.ctx, filter, opts)
-	if err != nil {
-		return nil, err
-	}
-
-	// Extract the hashes
-	hashes := make([]Hash, len(docs))
-	for i, doc := range docs {
-		hashes[i] = doc.Hash
-	}
-	return hashes, nil
-}
-
 // HashesToBlock sweeps the database for unblocked hashes after the given
 // timestamp.
 func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
