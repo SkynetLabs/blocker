@@ -52,19 +52,19 @@ type (
 // New returns a new Syncer with the given parameters.
 func New(ctx context.Context, blocker *blocker.Blocker, skydAPI skyd.API, db *database.DB, portalURLs []string, logger *logrus.Logger) (*Syncer, error) {
 	if ctx == nil {
-		return nil, errors.New("invalid context provided")
+		return nil, errors.New("no context provided")
 	}
 	if blocker == nil {
-		return nil, errors.New("invalid blocker provided")
+		return nil, errors.New("no blocker provided")
 	}
 	if db == nil {
-		return nil, errors.New("invalid DB provided")
+		return nil, errors.New("no DB provided")
 	}
 	if logger == nil {
-		return nil, errors.New("invalid logger provided")
+		return nil, errors.New("no logger provided")
 	}
 	if skydAPI == nil {
-		return nil, errors.New("invalid Skyd API provided")
+		return nil, errors.New("no Skyd API provided")
 	}
 	s := &Syncer{
 		staticBlocker:    blocker,
@@ -90,20 +90,26 @@ func (s *Syncer) Start() {
 	}
 
 	// start the sync loop
-	go func() {
-		for {
-			err := s.syncPortalsWithSkyd()
-			if err != nil {
-				logger.Errorf("failed to sync portals with skyd, error %v", err)
-			}
+	go s.threadedSyncLoop()
+}
 
-			select {
-			case <-s.staticCtx.Done():
-				return
-			case <-time.After(syncInterval):
-			}
+// threadedSyncLoop holds the main sync loop
+func (s *Syncer) threadedSyncLoop() {
+	// convenience variables
+	logger := s.staticLogger
+
+	for {
+		err := s.syncPortalsWithSkyd()
+		if err != nil {
+			logger.Errorf("failed to sync portals with skyd, error %v", err)
 		}
-	}()
+
+		select {
+		case <-s.staticCtx.Done():
+			return
+		case <-time.After(syncInterval):
+		}
+	}
 }
 
 // blocklistFromPortal returns the blocklist for the portal at the given URL.

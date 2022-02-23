@@ -83,10 +83,10 @@ func New(ctx context.Context, uri string, creds options.Credential, logger *logr
 // name.
 func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.Credential, logger *logrus.Logger) (*DB, error) {
 	if ctx == nil {
-		return nil, errors.New("invalid context provided")
+		return nil, errors.New("no context provided")
 	}
 	if logger == nil {
-		return nil, errors.New("invalid logger provided")
+		return nil, errors.New("no logger provided")
 	}
 
 	// Define a new context with a timeout to handle the database setup.

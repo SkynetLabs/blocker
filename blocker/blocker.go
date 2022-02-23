@@ -59,16 +59,16 @@ type (
 // New returns a new Blocker with the given parameters.
 func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
 	if ctx == nil {
-		return nil, errors.New("invalid context provided")
+		return nil, errors.New("no context provided")
 	}
 	if db == nil {
-		return nil, errors.New("invalid DB provided")
+		return nil, errors.New("no DB provided")
 	}
 	if logger == nil {
-		return nil, errors.New("invalid logger provided")
+		return nil, errors.New("no logger provided")
 	}
 	if skydAPI == nil {
-		return nil, errors.New("invalid Skyd API provided")
+		return nil, errors.New("no Skyd API provided")
 	}
 	bl := &Blocker{
 		staticCtx:     ctx,
@@ -85,9 +85,7 @@ func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.
 func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 	start := 0
 
-	// we have to keep track of what hashes were blocked, what hashes were
-	// invalid and what hainvalid, and what hashes we
-	// failed to block, because we don't want to retry the invalid hashes
+	// keep track of the amount of blocked and invalid hashes
 	var numBlocked int
 	var numInvalid int
 
