@@ -186,7 +186,7 @@ func (bl *Blocker) SweepAndBlock() error {
 	bl.staticLogger.Tracef("SweepAndBlock blocked %v hashes, %v invalid hashes", blocked, invalid)
 
 	// Update the latest block time
-	bl.latestBlockTime = time.Now()
+	bl.latestBlockTime = time.Now().UTC()
 	return nil
 }
 

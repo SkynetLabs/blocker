@@ -179,12 +179,20 @@ func TestRestoreEnv(t *testing.T) {
 func restoreEnv(variables []string) func() error {
 	backup := make(map[string]string)
 	for _, variable := range variables {
-		backup[variable] = os.Getenv(variable)
+		value, exists := os.LookupEnv(variable)
+		if exists {
+			backup[variable] = value
+		}
 	}
 	return func() error {
 		var errs []error
-		for key, value := range backup {
-			if err := os.Setenv(key, value); err != nil {
+		for _, variable := range variables {
+			original, exists := backup[variable]
+			if !exists {
+				os.Unsetenv(variable)
+				continue
+			}
+			if err := os.Setenv(variable, original); err != nil {
 				errs = append(errs, err)
 			}
 		}
