@@ -189,7 +189,9 @@ func restoreEnv(variables []string) func() error {
 		for _, variable := range variables {
 			original, exists := backup[variable]
 			if !exists {
-				os.Unsetenv(variable)
+				if err := os.Unsetenv(variable); err != nil {
+					errs = append(errs, err)
+				}
 				continue
 			}
 			if err := os.Setenv(variable, original); err != nil {
