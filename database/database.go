@@ -208,13 +208,13 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 	return true, nil
 }
 
-// MarkAsFailed will mark the given documents as failed
-func (db *DB) MarkAsFailed(hashes []Hash) error {
+// MarkFailed will mark the given documents as failed
+func (db *DB) MarkFailed(hashes []Hash) error {
 	return db.updateFailedFlag(hashes, true)
 }
 
-// MarkAsInvalid will mark the given documents as invalid
-func (db *DB) MarkAsInvalid(hashes []Hash) error {
+// MarkInvalid will mark the given documents as invalid
+func (db *DB) MarkInvalid(hashes []Hash) error {
 	// return early if no hashes were given
 	if len(hashes) == 0 {
 		return nil
@@ -238,9 +238,9 @@ func (db *DB) MarkAsInvalid(hashes []Hash) error {
 	return err
 }
 
-// MarkAsSucceeded will toggle the failed flag for all documents in the given
+// MarkSucceeded will toggle the failed flag for all documents in the given
 // list of hashes that are currently marked as failed.
-func (db *DB) MarkAsSucceeded(hashes []Hash) error {
+func (db *DB) MarkSucceeded(hashes []Hash) error {
 	return db.updateFailedFlag(hashes, false)
 }
 
@@ -480,10 +480,6 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			// has executed and the blocker has been running on hashes for a
 			// while, at that time the skylink index should be dropped and
 			// prevented from being set in the first place
-			{
-				Keys:    bson.D{{"skylink", 1}},
-				Options: options.Index().SetName("skylink").SetUnique(true),
-			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
 				Options: options.Index().SetName("timestamp_added"),

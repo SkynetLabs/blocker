@@ -110,7 +110,7 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 		// escape early because something is probably wrong
 		blocked, invalid, err := bl.staticSkydAPI.BlockHashes(batch)
 		if err != nil {
-			err = errors.Compose(err, bl.staticDB.MarkAsFailed(batch))
+			err = errors.Compose(err, bl.staticDB.MarkFailed(batch))
 			return numBlocked, numInvalid, err
 		}
 
@@ -119,8 +119,8 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 		numInvalid += len(invalid)
 
 		// update the documents
-		err1 := bl.staticDB.MarkAsSucceeded(blocked)
-		err2 := bl.staticDB.MarkAsInvalid(invalid)
+		err1 := bl.staticDB.MarkSucceeded(blocked)
+		err2 := bl.staticDB.MarkInvalid(invalid)
 		if err := errors.Compose(err1, err2); err != nil {
 			return numBlocked, numInvalid, err
 		}

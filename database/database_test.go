@@ -59,16 +59,16 @@ func TestDatabase(t *testing.T) {
 			test: testIsAllowListedSkylink,
 		},
 		{
-			name: "MarkAsSucceeded",
-			test: testMarkAsSucceeded,
+			name: "MarkSucceeded",
+			test: testMarkSucceeded,
 		},
 		{
-			name: "MarkAsFailed",
-			test: testMarkAsFailed,
+			name: "MarkFailed",
+			test: testMarkFailed,
 		},
 		{
-			name: "MarkAsInvalid",
-			test: testMarkAsInvalid,
+			name: "MarkInvalid",
+			test: testMarkInvalid,
 		},
 		{
 			name: "compatTransformSkylinkToHash",
@@ -220,9 +220,9 @@ func testIsAllowListedSkylink(t *testing.T) {
 	}
 }
 
-// testMarkAsSucceeded is a unit test that covers the functionality of
-// the 'MarkAsSucceeded' method on the database.
-func testMarkAsSucceeded(t *testing.T) {
+// testMarkSucceeded is a unit test that covers the functionality of
+// the 'MarkSucceeded' method on the database.
+func testMarkSucceeded(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
@@ -231,9 +231,9 @@ func testMarkAsSucceeded(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// ensure 'MarkAsSucceeded' can handle an empty slice
+	// ensure 'MarkSucceeded' can handle an empty slice
 	var empty []Hash
-	err := db.MarkAsSucceeded(empty)
+	err := db.MarkSucceeded(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -263,7 +263,7 @@ func testMarkAsSucceeded(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 1", len(toRetry))
 	}
 
-	err = db.MarkAsSucceeded(toRetry)
+	err = db.MarkSucceeded(toRetry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,9 +277,9 @@ func testMarkAsSucceeded(t *testing.T) {
 	}
 }
 
-// testMarkAsFailed is a unit test that covers the functionality of
-// the 'MarkAsFailed' method on the database.
-func testMarkAsFailed(t *testing.T) {
+// testMarkFailed is a unit test that covers the functionality of the
+// 'MarkFailed' method on the database.
+func testMarkFailed(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
@@ -288,9 +288,9 @@ func testMarkAsFailed(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// ensure 'MarkAsFailed' can handle an empty slice
+	// ensure 'MarkFailed' can handle an empty slice
 	var empty []Hash
-	err := db.MarkAsFailed(empty)
+	err := db.MarkFailed(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +346,7 @@ func testMarkAsFailed(t *testing.T) {
 	for i, doc := range all {
 		hashes[i] = doc.Hash
 	}
-	err = db.MarkAsFailed(hashes)
+	err = db.MarkFailed(hashes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -360,15 +360,15 @@ func testMarkAsFailed(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 2", len(toRetry))
 	}
 
-	// the above tests asserted that both 'HashesToRetry' and 'MarkAsFailed'
-	// both handle invalid documents properly
+	// the above tests asserted that both 'HashesToRetry' and 'MarkFailed' both
+	// handle invalid documents properly
 
 	// no need to mark them as succeeded, the other unit test covers that
 }
 
-// testMarkAsInvalid is a unit test that covers the functionality of the
-// 'MarkAsInvalid' method on the database.
-func testMarkAsInvalid(t *testing.T) {
+// testMarkInvalid is a unit test that covers the functionality of the
+// 'MarkInvalid' method on the database.
+func testMarkInvalid(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
@@ -377,9 +377,9 @@ func testMarkAsInvalid(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// ensure 'MarkAsInvalid' can handle an empty slice
+	// ensure 'MarkInvalid' can handle an empty slice
 	var empty []Hash
-	err := db.MarkAsInvalid(empty)
+	err := db.MarkInvalid(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func testMarkAsInvalid(t *testing.T) {
 	}
 
 	// mark it as invalid
-	err = db.MarkAsInvalid([]Hash{hash})
+	err = db.MarkInvalid([]Hash{hash})
 	if err != nil {
 		t.Fatal(err)
 	}
