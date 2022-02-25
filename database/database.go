@@ -156,7 +156,7 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 
 // BlockedHashes returns an array of blocked hashes.
 func (db *DB) BlockedHashes() ([]BlockedSkylink, error) {
-	return db.find(db.ctx, bson.M{"failed": bson.M{"$ne": true}})
+	return db.find(db.ctx, bson.M{"invalid": bson.M{"$ne": true}})
 }
 
 // Close disconnects the db.
