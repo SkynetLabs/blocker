@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"io/ioutil"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -87,6 +88,10 @@ func TestHandlers(t *testing.T) {
 		{
 			name: "HandleBlockRequest",
 			test: testHandleBlockRequest,
+		},
+		{
+			name: "HandleBlocklistGET",
+			test: testHandleBlocklistGET,
 		},
 	}
 	for _, test := range tests {
@@ -217,6 +222,85 @@ func testHandleBlockRequest(t *testing.T) {
 	}
 }
 
+// testHandleBlocklistGET verifies the GET /blocklist endpoint
+func testHandleBlocklistGET(t *testing.T) {
+	// create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
+	// create a new test API
+	skyd := &mockSkyd{}
+	api, err := newTestAPI("HandleBlockRequest", skyd)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// create a helper that fetches the blocklist
+	fetchBlocklist := func() (BlocklistGET, error) {
+		req := httptest.NewRequest(http.MethodGet, "/blocklist", nil)
+		w := httptest.NewRecorder()
+
+		api.blocklistGET(w, req, nil)
+		res := w.Result()
+		defer res.Body.Close()
+
+		data, err := ioutil.ReadAll(res.Body)
+		if err != nil {
+			return BlocklistGET{}, err
+		}
+
+		var blg BlocklistGET
+		json.Unmarshal(data, &blg)
+		return blg, nil
+	}
+
+	// fetch the blocklist and assert it is empty
+	bl, err := fetchBlocklist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bl.Created == (time.Time{}) {
+		t.Fatal("'Created' not set")
+	}
+	if len(bl.Hashes) != 0 {
+		t.Fatalf("'Hashes' expected to be empty, instead it was %v", len(bl.Hashes))
+	}
+
+	// insert a document
+	hash := database.HashBytes([]byte("skylink_1"))
+	err = api.staticDB.CreateBlockedSkylink(ctx, &database.BlockedSkylink{
+		Skylink: "skylink_1",
+		Hash:    hash,
+		Reporter: database.Reporter{
+			Name: "John Doe",
+		},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// fetch the blocklist and assert it continas our blocked hash
+	bl, err = fetchBlocklist()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Hashes) != 1 {
+		t.Fatalf("Expected number of hashes, expected 1 but received %v", len(bl.Hashes))
+	}
+	blocked := bl.Hashes[0]
+	if len(blocked.Tags) != 1 {
+		t.Fatalf("Unexpected number of tag, expected 1 but received %v", len(bl.Hashes[0].Tags))
+	}
+	if blocked.Tags[0] != "tag_1" {
+		t.Fatalf("Unexpected tag, expected tag_1 received %v", blocked.Tags[0])
+	}
+	if blocked.Hash.String() != hash.String() {
+		t.Fatalf("Unexpected hash, expected %v received %v", hash.String(), blocked.Hash.String())
+	}
+}
+
 // TestVerifySkappReport verifies a report directly generated from the abuse
 // skapp.
 func TestVerifySkappReport(t *testing.T) {
@@ -236,22 +320,22 @@ func TestVerifySkappReport(t *testing.T) {
 
 // newTestAPI returns a new API instance
 func newTestAPI(dbName string, skyd skyd.API) (*API, error) {
-	// create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
-	defer cancel()
-
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
 	// create database
-	db, err := database.NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
+	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
 		Username: "admin",
 		Password: "aO4tV5tC1oU3oQ7u",
 	}, logger)
 	if err != nil {
 		return nil, err
 	}
+
+	// create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
 
 	// purge the database
 	err = db.Purge(ctx)

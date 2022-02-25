@@ -14,6 +14,7 @@ import (
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
+	"go.sia.tech/siad/crypto"
 )
 
 var (
@@ -28,6 +29,19 @@ type (
 		Skylink  skylink  `json:"skylink"`
 		Reporter Reporter `json:"reporter"`
 		Tags     []string `json:"tags"`
+	}
+
+	// BlocklistGET returns a list of blocked hashes
+	BlocklistGET struct {
+		Hashes  []BlockedHash `json:"hashes"`
+		Created time.Time     `json:"created"`
+	}
+
+	// BlockedHash describes a blocked hash along with the set of tags it was
+	// reported with
+	BlockedHash struct {
+		Hash crypto.Hash `json:"hash"`
+		Tags []string    `json:"tags"`
 	}
 
 	// BlockWithPoWPOST describes a request to the /blockpow endpoint
@@ -84,6 +98,27 @@ func (sl *skylink) UnmarshalJSON(b []byte) error {
 	}
 	*sl = skylink(slNormalized.String())
 	return nil
+}
+
+// blocklistGET returns a list of blocked hashes and associated tags
+func (api *API) blocklistGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	blocked, err := api.staticDB.BlockedHashes()
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	hashes := make([]BlockedHash, len(blocked))
+	for i, bh := range blocked {
+		hashes[i] = BlockedHash{
+			Hash: bh.Hash.Hash,
+			Tags: bh.Tags,
+		}
+	}
+	skyapi.WriteJSON(w, BlocklistGET{
+		Hashes:  hashes,
+		Created: time.Now().UTC(),
+	})
 }
 
 // healthGET returns the status of the service

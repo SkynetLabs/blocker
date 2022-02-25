@@ -154,6 +154,11 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	return cdb, nil
 }
 
+// BlockedHashes returns an array of blocked hashes.
+func (db *DB) BlockedHashes() ([]BlockedSkylink, error) {
+	return db.find(db.ctx, bson.M{"failed": bson.M{"$ne": true}})
+}
+
 // Close disconnects the db.
 func (db *DB) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
