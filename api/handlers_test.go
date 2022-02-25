@@ -281,7 +281,7 @@ func testHandleBlocklistGET(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// fetch the blocklist and assert it continas our blocked hash
+	// fetch the blocklist and assert it contains our blocked hash
 	bl, err = fetchBlocklist()
 	if err != nil {
 		t.Fatal(err)
