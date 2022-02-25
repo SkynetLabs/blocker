@@ -5,11 +5,7 @@ WORKDIR /root
 
 ENV CGO_ENABLED=0
 
-COPY api api
-COPY blocker blocker
-COPY database database
-COPY skyd skyd
-COPY go.mod go.sum main.go Makefile ./
+COPY . .
 
 RUN go mod download && make release
 
