@@ -152,6 +152,28 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	return cdb, nil
 }
 
+// BlockedHashes allows to pass a skip and limit parameter and returns an array
+// of blocked hashes alongside a boolean that indicates whether there's more
+// documents after the current 'page'.
+func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, error) {
+	// configure the options
+	opts := options.Find()
+	opts.SetSkip(int64(skip))
+	opts.SetLimit(int64(limit + 1))
+	opts.SetSort(bson.D{{"timestamp_added", sort}})
+
+	// fetch the documents
+	docs, err := db.find(db.ctx, bson.M{"invalid": bson.M{"$ne": true}}, opts)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if len(docs) > int(limit) {
+		return docs[:limit], true, nil
+	}
+	return docs, false, nil
+}
+
 // Close disconnects the db.
 func (db *DB) Close() error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

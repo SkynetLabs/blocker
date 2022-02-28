@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
+	"sync"
 	"time"
 
+	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	"go.sia.tech/siad/build"
@@ -30,27 +32,29 @@ var (
 )
 
 type (
-	// Syncer periodically scans the blocklist of a set of portals which are
-	// configured by the user and adds the missing hashes to the blocklist of
-	// the local skyd. Alongside syncing with other portal's blocklists, the
-	// syncer will also ensure the local skyd's blocklist has all of the links
-	// which are contained in the database this syncer is connected to, ensuring
-	// all hashes are on its blocklist.
+	// Syncer periodically fetches the latest blocklist additions from a
+	// configured set of portals, adding them the local blocklist database.
 	Syncer struct {
-		staticCtx        context.Context
-		staticDB         *database.DB
-		staticBlocker    *blocker.Blocker
-		staticLogger     *logrus.Logger
-		staticPortalURLs []string
-		staticSkydAPI    skyd.API
-	}
+		started bool
 
-	// lookupTable is a helper struct that defines a hash map
-	lookupTable map[crypto.Hash]struct{}
+		// lastSyncedHash is a map that keeps track of the last synced hash per
+		// portal URL, when that hash is encountered in consecutive calls to
+		// fetch that portal's blocklist, we know we can stop paging
+		lastSyncedHash map[string]string
+
+		staticPortalURLs []string
+
+		staticDB      *database.DB
+		staticBlocker *blocker.Blocker
+		staticLogger  *logrus.Logger
+
+		staticCtx context.Context
+		staticMu  sync.Mutex
+	}
 )
 
 // New returns a new Syncer with the given parameters.
-func New(ctx context.Context, blocker *blocker.Blocker, skydAPI skyd.API, db *database.DB, portalURLs []string, logger *logrus.Logger) (*Syncer, error) {
+func New(ctx context.Context, blocker *blocker.Blocker, db *database.DB, portalURLs []string, logger *logrus.Logger) (*Syncer, error) {
 	if ctx == nil {
 		return nil, errors.New("no context provided")
 	}
@@ -63,34 +67,41 @@ func New(ctx context.Context, blocker *blocker.Blocker, skydAPI skyd.API, db *da
 	if logger == nil {
 		return nil, errors.New("no logger provided")
 	}
-	if skydAPI == nil {
-		return nil, errors.New("no Skyd API provided")
-	}
 	s := &Syncer{
 		staticBlocker:    blocker,
 		staticCtx:        ctx,
 		staticDB:         db,
 		staticLogger:     logger,
 		staticPortalURLs: portalURLs,
-		staticSkydAPI:    skydAPI,
 	}
 	return s, nil
 }
 
 // Start launches a background task that periodically syncs the blocklists of
 // the preconfigured portals with the blocklist of the local skyd instance.
-func (s *Syncer) Start() {
+func (s *Syncer) Start() error {
+	s.staticMu.Lock()
+	defer s.staticMu.Unlock()
+
 	// convenience variables
 	logger := s.staticLogger
 
 	// escape early if the syncer has no portal urls configured
 	if len(s.staticPortalURLs) == 0 {
 		logger.Infof("syncer is not being started because no portal URLs have been defined")
-		return
+		return nil
 	}
+
+	// assert 'Start' is only called once
+	if s.started {
+		return errors.New("syncer already started")
+	}
+	s.started = true
 
 	// start the sync loop
 	go s.threadedSyncLoop()
+
+	return nil
 }
 
 // threadedSyncLoop holds the main sync loop
@@ -99,7 +110,7 @@ func (s *Syncer) threadedSyncLoop() {
 	logger := s.staticLogger
 
 	for {
-		err := s.syncPortalsWithSkyd()
+		err := s.syncPortals()
 		if err != nil {
 			logger.Errorf("failed to sync portals with skyd, error %v", err)
 		}
@@ -113,12 +124,18 @@ func (s *Syncer) threadedSyncLoop() {
 }
 
 // blocklistFromPortal returns the blocklist for the portal at the given URL.
-func (s *Syncer) blocklistFromPortal(portalURL string) ([]crypto.Hash, error) {
+func (s *Syncer) blocklistFromPortal(portalURL string, offset, limit int) (api.BlocklistGET, error) {
 	// convenience variables
 	logger := s.staticLogger
 
+	// prepare query string params
+	values := url.Values{}
+	values.Set("offset", fmt.Sprint(offset))
+	values.Set("limit", fmt.Sprint(limit))
+	queryString := values.Encode()
+
 	// build the request to fetch the blocklist from the portal
-	url := fmt.Sprintf("%s/skynet/blocklist", portalURL)
+	url := fmt.Sprintf("%s/skynet/portal/blocklist?%s", portalURL, queryString)
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to build blocklist request")
@@ -149,20 +166,11 @@ func (s *Syncer) blocklistFromPortal(portalURL string) ([]crypto.Hash, error) {
 
 // syncPortalsWithSkyd will sync the blocklist of all portals defined on the
 // syncer with the local skyd.
-func (s *Syncer) syncPortalsWithSkyd() error {
+func (s *Syncer) syncPortals() error {
 	// convenience variables
 	logger := s.staticLogger
 
-	// fetch skyd's current blocklist
-	blocklist, err := s.staticSkydAPI.Blocklist()
-	if err != nil {
-		return errors.AddContext(err, "could not fetch blocklist from local skyd")
-	}
-
-	// build a lookup table of existing hashes
-	existing := buildLookupTable(blocklist)
-
-	// loop all portals and perform a sync
+	// sync all portals one by one
 	var errs []error
 	for _, portalURL := range s.staticPortalURLs {
 		logger.Infof("syncing blocklist for portal '%s'", portalURL)
@@ -205,14 +213,4 @@ func (s *Syncer) syncBlocklistWithSkyd(existing, update lookupTable) (int, error
 	}
 
 	return blocked, nil
-}
-
-// buildLookupTable is a small helper function that takes a list of hashes and
-// turns it into a lookup table.
-func buildLookupTable(hashes []crypto.Hash) lookupTable {
-	lookup := make(map[crypto.Hash]struct{})
-	for _, hash := range hashes {
-		lookup[hash] = struct{}{}
-	}
-	return lookup
 }
