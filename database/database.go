@@ -168,6 +168,9 @@ func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, erro
 		return nil, false, err
 	}
 
+	// we have done the find with "limit+1" because that allows us to return
+	// whether there are "more" documents after the given offset, we however do
+	// not want to return this document, but instead return 'true' if it existed
 	if len(docs) > int(limit) {
 		return docs[:limit], true, nil
 	}
