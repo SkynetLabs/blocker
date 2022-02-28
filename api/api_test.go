@@ -90,6 +90,9 @@ func (at *apiTester) blocklistGET(sort *string, offset, limit *int) (BlocklistGE
 		return BlocklistGET{}, err
 	}
 	var blg BlocklistGET
-	json.Unmarshal(data, &blg)
+	err = json.Unmarshal(data, &blg)
+	if err != nil {
+		return BlocklistGET{}, err
+	}
 	return blg, nil
 }
