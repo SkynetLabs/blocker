@@ -239,7 +239,7 @@ func testHandleBlocklistGET(t *testing.T) {
 	apiTester := newAPITester(api)
 
 	// fetch the blocklist and assert it is empty
-	bl, err := apiTester.blocklistGET(api, nil, nil, nil)
+	bl, err := apiTester.blocklistGET(nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +270,7 @@ func testHandleBlocklistGET(t *testing.T) {
 	}
 
 	// assert base case
-	bl, err = apiTester.blocklistGET(api, nil, nil, nil)
+	bl, err = apiTester.blocklistGET(nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func testHandleBlocklistGET(t *testing.T) {
 
 	// assert limit of 1
 	limit := 1
-	bl, err = apiTester.blocklistGET(api, nil, nil, &limit)
+	bl, err = apiTester.blocklistGET(nil, nil, &limit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func testHandleBlocklistGET(t *testing.T) {
 
 	// assert offset of 1
 	offset := 1
-	bl, err = apiTester.blocklistGET(api, nil, &offset, nil)
+	bl, err = apiTester.blocklistGET(nil, &offset, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,7 +318,7 @@ func testHandleBlocklistGET(t *testing.T) {
 
 	// assert sort
 	sort := "desc"
-	bl, err = apiTester.blocklistGET(api, &sort, nil, nil)
+	bl, err = apiTester.blocklistGET(&sort, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,7 +341,7 @@ func testHandleBlocklistGET(t *testing.T) {
 	hasmore := true
 	var entries []BlockedHash
 	for hasmore {
-		bl, err = apiTester.blocklistGET(api, nil, &offset, &limit)
+		bl, err = apiTester.blocklistGET(nil, &offset, &limit)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -61,7 +61,7 @@ func newTestAPI(dbName string, skyd skyd.API) (*API, error) {
 
 // blocklistGET records an api call to GET /blocklist on the underlying API
 // using the given parameters and returns a parsed response.
-func (*apiTester) blocklistGET(api *API, sort *string, offset, limit *int) (BlocklistGET, error) {
+func (at *apiTester) blocklistGET(sort *string, offset, limit *int) (BlocklistGET, error) {
 	// set url values
 	values := url.Values{}
 	if offset != nil {
@@ -80,7 +80,7 @@ func (*apiTester) blocklistGET(api *API, sort *string, offset, limit *int) (Bloc
 
 	// create a recorder and execute the request
 	w := httptest.NewRecorder()
-	api.blocklistGET(w, req, nil)
+	at.staticAPI.blocklistGET(w, req, nil)
 	res := w.Result()
 	defer res.Body.Close()
 
