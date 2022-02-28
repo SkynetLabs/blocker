@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	url "net/url"
+	"strings"
 	"testing"
 	"time"
 
@@ -235,69 +238,183 @@ func testHandleBlocklistGET(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// create a helper that fetches the blocklist
-	fetchBlocklist := func() (BlocklistGET, error) {
-		req := httptest.NewRequest(http.MethodGet, "/blocklist", nil)
-		w := httptest.NewRecorder()
+	// fetch the blocklist and assert it is empty
+	bl, err := fetchBlocklist(api, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected")
+	}
+	if len(bl.Entries) != 0 {
+		t.Fatalf("unexpected number of entries, %v != 0", len(bl.Entries))
+	}
 
-		api.blocklistGET(w, req, nil)
-		res := w.Result()
-		defer res.Body.Close()
-
-		data, err := ioutil.ReadAll(res.Body)
+	// insert 20 documents
+	for i := 0; i < 20; i++ {
+		tag := fmt.Sprintf("tag_%d", i)
+		skylink := fmt.Sprintf("skylink_%d", i)
+		offset := time.Duration(i) * time.Second
+		err = api.staticDB.CreateBlockedSkylink(ctx, &database.BlockedSkylink{
+			Skylink: skylink,
+			Hash:    database.HashBytes([]byte(skylink)),
+			Reporter: database.Reporter{
+				Name: "John Doe",
+			},
+			Tags:           []string{tag},
+			TimestampAdded: time.Now().UTC().Add(offset),
+		})
 		if err != nil {
-			return BlocklistGET{}, err
+			t.Fatal(err)
+		}
+	}
+
+	// assert base case
+	bl, err = fetchBlocklist(api, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 20 {
+		t.Fatalf("unexpected number of entries, %v != 20", len(bl.Entries))
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+
+	// assert default sort
+	if len(bl.Entries[0].Tags) != 1 || bl.Entries[0].Tags[0] != "tag_0" ||
+		len(bl.Entries[1].Tags) != 1 || bl.Entries[1].Tags[0] != "tag_1" {
+		t.Fatal("unexpected sort", bl)
+	}
+
+	// assert limit of 1
+	limit := 1
+	bl, err = fetchBlocklist(api, nil, nil, &limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 1 {
+		t.Fatalf("unexpected number of entries, %v != 1", len(bl.Entries))
+	}
+	if !bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+
+	// assert offset of 1
+	offset := 1
+	bl, err = fetchBlocklist(api, nil, &offset, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 19 {
+		t.Fatalf("unexpected number of entries, %v != 19", len(bl.Entries))
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+	if len(bl.Entries[0].Tags) != 1 || bl.Entries[0].Tags[0] != "tag_1" {
+		t.Fatal("unexpected first entry", bl.Entries[0])
+	}
+
+	// assert sort
+	sort := "desc"
+	bl, err = fetchBlocklist(api, &sort, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 20 {
+		t.Fatalf("unexpected number of entries, %v != 20", len(bl.Entries))
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+	// assert 'desc' sort
+	if len(bl.Entries[0].Tags) != 1 || bl.Entries[0].Tags[0] != "tag_19" ||
+		len(bl.Entries[1].Tags) != 1 || bl.Entries[1].Tags[0] != "tag_18" {
+		t.Fatal("unexpected sort", bl)
+	}
+
+	// assert pagination
+	offset = 0
+	limit = 5
+	numCalls := 0
+	hasmore := true
+	var entries []BlockedHash
+	for hasmore {
+		bl, err = fetchBlocklist(api, nil, &offset, &limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		numCalls++
+		offset += limit
+		entries = append(entries, bl.Entries...)
+		hasmore = bl.HasMore
+	}
+	if numCalls != 4 {
+		t.Fatalf("unexpected number of calls, %v != 4", numCalls)
+	}
+	if len(entries) != 20 {
+		t.Fatalf("unexpected number of entries, %v != 20", len(entries))
+	}
+}
+
+// TestParseListParams is a unit test that covers parseListParameters
+func TestParseListParams(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in  []interface{}
+		out []int
+		err string
+	}{
+		// // valid cases
+		{[]interface{}{nil, nil, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{"asc", nil, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{"desc", nil, nil}, []int{-1, 0, 1000}, ""},
+		{[]interface{}{"ASC", nil, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{"DESC", nil, nil}, []int{-1, 0, 1000}, ""},
+		{[]interface{}{nil, 0, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{nil, 10, nil}, []int{1, 10, 1000}, ""},
+		{[]interface{}{nil, nil, 1}, []int{1, 0, 1}, ""},
+		{[]interface{}{nil, nil, 10}, []int{1, 0, 10}, ""},
+
+		// invalid cases
+		{[]interface{}{"ttt", nil, nil}, []int{0, 0, 0}, "invalid value for 'sort'"},
+		{[]interface{}{nil, -1, nil}, []int{0, 0, 0}, "invalid value for 'offset'"},
+		{[]interface{}{nil, nil, 0}, []int{0, 0, 0}, "invalid value for 'limit'"},
+		{[]interface{}{nil, nil, 1001}, []int{0, 0, 0}, "invalid value for 'limit'"},
+	}
+
+	// Test set cases to ensure known edge cases are always handled
+	for _, test := range tests {
+		params := []string{"sort", "offset", "limit"}
+
+		values := url.Values{}
+		for i, key := range params {
+			if test.in[i] != nil {
+				values.Set(key, fmt.Sprint(test.in[i]))
+			}
 		}
 
-		var blg BlocklistGET
-		json.Unmarshal(data, &blg)
-		return blg, nil
-	}
+		sort, offset, limit, err := parseListParameters(values)
+		if test.err != "" && err == nil {
+			t.Fatalf("Expected error containing '%v' but was nil", test.err)
+		}
+		if test.err != "" && !strings.Contains(err.Error(), test.err) {
+			t.Fatalf("Expected error containing '%v' but was %v", test.err, err.Error())
+		}
+		if test.err == "" && err != nil {
+			t.Fatalf("Expected no error, but received '%v'", err.Error())
+		}
 
-	// fetch the blocklist and assert it is empty
-	bl, err := fetchBlocklist()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if bl.Created == (time.Time{}) {
-		t.Fatal("'Created' not set")
-	}
-	if len(bl.Hashes) != 0 {
-		t.Fatalf("'Hashes' expected to be empty, instead it was %v", len(bl.Hashes))
-	}
-
-	// insert a document
-	hash := database.HashBytes([]byte("skylink_1"))
-	err = api.staticDB.CreateBlockedSkylink(ctx, &database.BlockedSkylink{
-		Skylink: "skylink_1",
-		Hash:    hash,
-		Reporter: database.Reporter{
-			Name: "John Doe",
-		},
-		Tags:           []string{"tag_1"},
-		TimestampAdded: time.Now().UTC(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// fetch the blocklist and assert it contains our blocked hash
-	bl, err = fetchBlocklist()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(bl.Hashes) != 1 {
-		t.Fatalf("Expected number of hashes, expected 1 but received %v", len(bl.Hashes))
-	}
-	blocked := bl.Hashes[0]
-	if len(blocked.Tags) != 1 {
-		t.Fatalf("Unexpected number of tag, expected 1 but received %v", len(bl.Hashes[0].Tags))
-	}
-	if blocked.Tags[0] != "tag_1" {
-		t.Fatalf("Unexpected tag, expected tag_1 received %v", blocked.Tags[0])
-	}
-	if blocked.Hash.String() != hash.String() {
-		t.Fatalf("Unexpected hash, expected %v received %v", hash.String(), blocked.Hash.String())
+		result := []int{sort, offset, limit}
+		for i := range params {
+			if result[i] != test.out[i] {
+				t.Log("Result", result)
+				t.Log("Expected", test.out)
+				t.Fatal("Unexpected")
+			}
+		}
 	}
 }
 
@@ -349,4 +466,38 @@ func newTestAPI(dbName string, skyd skyd.API) (*API, error) {
 		return nil, err
 	}
 	return api, nil
+}
+
+// fetchBlocklist is a helper function that fetches the blocklist
+func fetchBlocklist(api *API, sort *string, offset, limit *int) (BlocklistGET, error) {
+	// set url values
+	values := url.Values{}
+	if offset != nil {
+		values.Set("offset", fmt.Sprint(*offset))
+	}
+	if limit != nil {
+		values.Set("limit", fmt.Sprint(*limit))
+	}
+	if sort != nil {
+		values.Set("sort", *sort)
+	}
+
+	// create the request
+	url := fmt.Sprintf("/blocklist?%s", values.Encode())
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+
+	// create a recorder and execute the request
+	w := httptest.NewRecorder()
+	api.blocklistGET(w, req, nil)
+	res := w.Result()
+	defer res.Body.Close()
+
+	// handle the response
+	data, err := ioutil.ReadAll(res.Body)
+	if err != nil {
+		return BlocklistGET{}, err
+	}
+	var blg BlocklistGET
+	json.Unmarshal(data, &blg)
+	return blg, nil
 }
