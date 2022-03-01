@@ -127,7 +127,10 @@ func main() {
 	}
 
 	// Start the syncer.
-	sync.Start()
+	err = sync.Start()
+	if err != nil {
+		log.Fatal(errors.AddContext(err, "failed to start syncer"))
+	}
 
 	// Initialise the server.
 	server, err := api.New(skydAPI, db, logger)
