@@ -84,8 +84,8 @@ func (at *apiTester) blocklistGET(sort *string, offset, limit *int) (BlocklistGE
 }
 
 // get is a helper function that executes a GET request on the given endpoint
-// withe provided query values. It allows passing an object into which we'll
-// unmarshal the response body
+// with the provided query values. The response will get unmarshaled into the
+// given response object.
 func (at *apiTester) get(endpoint string, query url.Values, obj interface{}) error {
 	// create the request
 	url := fmt.Sprintf("%s?%s", endpoint, query.Encode())
@@ -104,7 +104,7 @@ func (at *apiTester) get(endpoint string, query url.Values, obj interface{}) err
 	}
 
 	// return an error if the status code is not in the 200s
-	if res.StatusCode >= 300 {
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
 		return fmt.Errorf("GET request to '%s' with status %d, response body: %v", endpoint, res.StatusCode, string(data))
 	}
 
