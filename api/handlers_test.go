@@ -13,7 +13,6 @@ import (
 
 	"github.com/SkynetLabs/blocker/database"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
-	"go.sia.tech/siad/crypto"
 )
 
 var (
@@ -29,7 +28,6 @@ type mockSkyd struct{}
 // the following methods are the implementation of the interface, it's
 // essentially all no-ops except for the resolver which resolves a predefined v2
 // skylink to its v1.
-func (api *mockSkyd) Blocklist() ([]crypto.Hash, error) { return nil, nil }
 func (api *mockSkyd) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
 	return nil, nil, nil
 }

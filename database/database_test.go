@@ -112,11 +112,18 @@ func testCreateBlockedSkylink(t *testing.T) {
 
 	// verify we assert 'Hash' is set
 	err := db.CreateBlockedSkylink(ctx, &BlockedSkylink{})
-	if err == nil || !strings.Contains(err.Error(), "'hash' is not set") {
-		t.Fatal("expected 'hash is not set' error", err)
+	if err == nil || !strings.Contains(err.Error(), "missing 'Hash' property") {
+		t.Fatal("expected 'missing 'Hash' property' error", err)
 	}
 	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash: HashBytes([]byte("somehash")),
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing 'TimestampAdded' property") {
+		t.Fatal("expected 'missing 'TimestampAdded' property' error", err)
+	}
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Hash:           HashBytes([]byte("somehash")),
+		TimestampAdded: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal("unexpected error", err)

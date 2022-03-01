@@ -24,40 +24,54 @@ func NewClient(portalURL string) *Client {
 // BlocklistGET calls the `/portal/blocklist` endpoint with given parameters
 func (c *Client) BlocklistGET(offset int) (*BlocklistGET, error) {
 	// set url values
-	values := url.Values{}
-	values.Set("offset", fmt.Sprint(offset))
-	values.Set("sort", "desc")
-	query := values.Encode()
+	query := url.Values{}
+	query.Set("offset", fmt.Sprint(offset))
+	query.Set("sort", "desc")
 
+	// execute the get request
+	var blg BlocklistGET
+	err := c.get("/portal/blocklist", query, &blg)
+	if err != nil {
+		return nil, errors.AddContext(err, fmt.Sprintf("failed to fetch blocklist for portal %s", c.staticPortalURL))
+	}
+
+	return &blg, nil
+}
+
+// get is a helper function that executes a GET request on the given endpoint
+// with the provided query values. The response will get unmarshaled into the
+// given response object.
+func (c *Client) get(endpoint string, query url.Values, obj interface{}) error {
 	// create the request
-	url := fmt.Sprintf("%s/portal/blocklist?%s", c.staticPortalURL, query)
+	url := fmt.Sprintf("%s%s?%s", c.staticPortalURL, endpoint, query.Encode())
 	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
-		return nil, errors.AddContext(err, fmt.Sprintf("failed to build blocklist request for portal %s", c.staticPortalURL))
+		return errors.AddContext(err, "failed to create request")
 	}
 
 	// set headers and execute the request
 	req.Header.Set("User-Agent", "Sia-Agent")
 	res, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return nil, errors.AddContext(err, fmt.Sprintf("failed to fetch blocklist for portal %s", c.staticPortalURL))
+		return err
 	}
 	defer res.Body.Close()
-
-	// check status code
-	if res.StatusCode != 200 {
-		return nil, errors.AddContext(err, fmt.Sprintf("unexpected status code %d from portal %s", res.StatusCode, c.staticPortalURL))
-	}
 
 	// handle the response
 	data, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return nil, errors.AddContext(err, fmt.Sprintf("failed to read response body from portal %s", c.staticPortalURL))
+		return err
 	}
-	var blg BlocklistGET
-	err = json.Unmarshal(data, &blg)
+
+	// return an error if the status code is not in the 200s
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return fmt.Errorf("GET request to '%s' with status %d, response body: %v", endpoint, res.StatusCode, string(data))
+	}
+
+	// unmarshal the body into the given object
+	err = json.Unmarshal(data, obj)
 	if err != nil {
-		return nil, errors.AddContext(err, fmt.Sprintf("failed to unmarshal blocklist response from portal %s", c.staticPortalURL))
+		return err
 	}
-	return &blg, nil
+	return nil
 }

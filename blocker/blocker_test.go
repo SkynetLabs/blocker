@@ -11,7 +11,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
-	"go.sia.tech/siad/crypto"
 )
 
 // mockSkyd is a helper struct that implements the skyd API, all methods are
@@ -19,11 +18,6 @@ import (
 // arguments with which it is called
 type mockSkyd struct {
 	blockHashesReqs [][]database.Hash
-}
-
-// Blocklist returns a list of hashes that make up the blocklist.
-func (api *mockSkyd) Blocklist() ([]crypto.Hash, error) {
-	return nil, nil
 }
 
 // BlockHashes adds the given hashes to the block list.
