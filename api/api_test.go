@@ -104,7 +104,7 @@ func (at *apiTester) get(endpoint string, query url.Values, obj interface{}) err
 	}
 
 	// return an error if the status code is not in the 200s
-	if res.StatusCode > 300 {
+	if res.StatusCode >= 300 {
 		return fmt.Errorf("GET request to '%s' with status %d, response body: %v", endpoint, res.StatusCode, string(data))
 	}
 
