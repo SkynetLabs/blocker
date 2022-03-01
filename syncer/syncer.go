@@ -21,7 +21,7 @@ var (
 		build.Var{
 			Dev:      time.Minute,
 			Testing:  time.Minute,
-			Standard: 4 * time.Hour,
+			Standard: 15 * time.Minute,
 		},
 	).(time.Duration)
 )

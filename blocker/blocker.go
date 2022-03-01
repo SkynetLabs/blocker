@@ -165,6 +165,8 @@ func (bl *Blocker) RetryFailedSkylinks() error {
 
 // SweepAndBlock sweeps the DB for new hashes to block.
 func (bl *Blocker) SweepAndBlock() error {
+	now := time.Now().UTC()
+
 	// Fetch hashes to block
 	hashes, err := bl.staticDB.HashesToBlock(bl.latestBlockTime)
 	if err != nil {
@@ -185,8 +187,9 @@ func (bl *Blocker) SweepAndBlock() error {
 
 	bl.staticLogger.Tracef("SweepAndBlock blocked %v hashes, %v invalid hashes", blocked, invalid)
 
-	// Update the latest block time
-	bl.latestBlockTime = time.Now().UTC()
+	// Update the latest block time to the time immediately prior to fetching
+	// the hashes from the database.
+	bl.latestBlockTime = now
 	return nil
 }
 
