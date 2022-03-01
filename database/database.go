@@ -204,6 +204,36 @@ func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink)
 	return nil
 }
 
+// CreateBlockedSkylinkBulk creates new blocked skylinks in bulk. It returns the
+// number of created entries.
+func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSkylink) (int, error) {
+	// Convenience variables
+	logger := db.staticLogger
+
+	// Ensure the hash is set on all blocked skylinks
+	for _, skylink := range skylinks {
+		if skylink.Hash == (Hash{}) {
+			return 0, errors.New("unexpected BlockedSkylink, 'hash' is not set")
+		}
+	}
+
+	// Convert the given array to an interface array
+	docs := make([]interface{}, len(skylinks))
+	for i, doc := range skylinks {
+		docs[i] = doc
+	}
+
+	opts := options.InsertMany()
+	opts.SetOrdered(false)
+	res, err := db.staticSkylinks.InsertMany(ctx, docs, opts)
+	if err != nil && !isDuplicateKey(err) {
+		logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", err)
+		return 0, err
+	}
+
+	return len(res.InsertedIDs), nil
+}
+
 // CreateAllowListedSkylink creates a new allowlisted skylink. If the skylink
 // already exists it does nothing and returns without failure.
 func (db *DB) CreateAllowListedSkylink(ctx context.Context, skylink *AllowListedSkylink) error {
@@ -500,11 +530,10 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 			},
 		},
 		collSkylinks: {
-			// TODO: the schema should be extended here to have a unique index
-			// on the 'hash' field, this can be done safely if the compat code
-			// has executed and the blocker has been running on hashes for a
-			// while, at that time the skylink index should be dropped and
-			// prevented from being set in the first place
+			{
+				Keys:    bson.D{{"hash", 1}},
+				Options: options.Index().SetName("hash").SetUnique(true),
+			},
 			{
 				Keys:    bson.D{{"timestamp_added", 1}},
 				Options: options.Index().SetName("timestamp_added"),

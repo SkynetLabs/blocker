@@ -4,49 +4,20 @@ import (
 	"context"
 	"crypto/rand"
 	"io/ioutil"
-	"sync"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
-	"github.com/SkynetLabs/blocker/blocker"
+	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
-	"gitlab.com/SkynetLabs/skyd/skymodules"
+	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.sia.tech/siad/build"
 	"go.sia.tech/siad/crypto"
 )
-
-// mockSkyd is a helper struct that implements the skyd API, all methods are
-// essentially a no-op except for 'Blocklist' which returns a hardcoded list of
-// hashes and 'BlockHashes' which registers the request.
-type mockSkyd struct {
-	blockHashesReqs [][]database.Hash
-	mu              sync.Mutex
-}
-
-// Blocklist returns a list of hashes that make up the blocklist.
-func (api *mockSkyd) Blocklist() ([]crypto.Hash, error) {
-	return []crypto.Hash{randomHash()}, nil
-}
-
-// BlockHashes adds the given hashes to the block list.
-func (api *mockSkyd) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
-	api.mu.Lock()
-	defer api.mu.Unlock()
-	api.blockHashesReqs = append(api.blockHashesReqs, hashes)
-	return hashes, nil, nil
-}
-
-// IsSkydUp returns true if the skyd API instance is up.
-func (api *mockSkyd) IsSkydUp() bool { return true }
-
-// ResolveSkylink tries to resolve the given skylink to a V1 skylink.
-func (api *mockSkyd) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
-	return skylink, nil
-}
 
 // TestSyncer is a collection of unit tests to verify the functionality of the
 // Syncer.
@@ -56,68 +27,35 @@ func TestSyncer(t *testing.T) {
 	}
 	t.Parallel()
 
-	t.Run("blocklistFromPortal", testBlocklistFromPortal)
-	t.Run("buildLookupTable", testBuildLookupTable)
+	t.Run("lastSyncedHash", testLastSyncedHash)
 	t.Run("randomHash", testRandomHash)
-	t.Run("start", testStart)
-	t.Run("syncBlocklistWithSkyd", testSyncBlocklistWithSkyd)
+	t.Run("syncer", testSyncer)
 }
 
-// testBlocklistFromPortal is an integration test that fetches the blocklist
-// from siasky.net
-func testBlocklistFromPortal(t *testing.T) {
-	// create a context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
-
-	// create a mock of skyd
-	skyd := &mockSkyd{}
+// testLastSyncedHash is a unit test that verifies the last synced hash setter
+// and getter on the Syncer.
+func testLastSyncedHash(t *testing.T) {
+	t.Parallel()
 
 	// create a test syncer
-	s, err := newTestSyncer(ctx, skyd, "testSyncBlocklistWithSkyd")
+	s, err := newTestSyncer("testLastSyncedHash", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// fetch the blocklist and assert it's not empty
-	blocklist, err := s.blocklistFromPortal("https://siasky.net")
-	if err != nil {
-		t.Fatal("unexpected error occurred fetching blocklist from siasky.net", err)
-	}
-	if len(blocklist) == 0 {
-		t.Fatal("expected blocklist to be non empty", len(blocklist))
-	}
-}
-
-// testBuildLookupTable is a small unit test that covers the functionality of
-// the 'buildLookupTable' helper.
-func testBuildLookupTable(t *testing.T) {
-	// create three random hashes
-	h1 := randomHash()
-	h2 := randomHash()
-	h3 := randomHash()
-
-	// base case
-	lt := buildLookupTable(nil)
-	if len(lt) != 0 {
-		t.Fatal("expected lookup table to not be empty")
+	// basic case
+	portalURL := "https://siasky.net"
+	lastSynced := s.managedLastSyncedHash(portalURL)
+	if lastSynced != "" {
+		t.Fatal("unexpected", lastSynced)
 	}
 
-	// rebuild a lookup table with two hashes
-	lt = buildLookupTable([]crypto.Hash{h1, h2})
-
-	// assert the first two hashes exists and the third one does not
-	_, exists := lt[h1]
-	if !exists {
-		t.Fatal("expected lookup table to contain h1")
-	}
-	_, exists = lt[h2]
-	if !exists {
-		t.Fatal("expected lookup table to contain h2")
-	}
-	_, exists = lt[h3]
-	if exists {
-		t.Fatal("expected lookup table to not contain h3")
+	// update and check
+	hash := randomHash()
+	s.managedUpdateLastSyncedHash(portalURL, hash.String())
+	lastSynced = s.managedLastSyncedHash(portalURL)
+	if lastSynced != hash.String() {
+		t.Fatal("unexpected", lastSynced)
 	}
 }
 
@@ -129,109 +67,119 @@ func testRandomHash(t *testing.T) {
 	}
 }
 
-// testStart is an integration test that syncs siasky.net's blocklist with our
+type mockAPI struct{}
+
+func (api mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	panic("wtf")
+}
+
+// testSyncer is an integration test that syncs siasky.net's blocklist with our
 // mock skyd instance
-func testStart(t *testing.T) {
-	// create a context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
+func testSyncer(t *testing.T) {
+	// create a mocked blocklist response returning two hashes
+	hash1 := randomHash()
+	hash2 := randomHash()
+	blg := api.BlocklistGET{
+		Entries: []api.BlockedHash{
+			{Hash: hash1, Tags: []string{"tag_1"}},
+			{Hash: hash2, Tags: []string{"tag_2"}},
+		},
+		HasMore: false,
+	}
 
-	// create a mock of skyd
-	skyd := &mockSkyd{}
+	// create a small server that returns our response
+	mux := http.NewServeMux()
+	mux.HandleFunc("/portal/blocklist", func(w http.ResponseWriter, r *http.Request) {
+		skyapi.WriteJSON(w, blg)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
 
-	// create a test syncer
-	s, err := newTestSyncer(ctx, skyd, "testSyncBlocklistWithSkyd")
+	// create a test syncer that syncs from our server
+	s, err := newTestSyncer("testSyncer", []string{server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	s.staticPortalURLs = []string{"https://siasky.net"}
+	// insert one hash manually, this will assert that our insert ignores
+	// duplicate entries
+	s.staticDB.CreateBlockedSkylink(context.Background(), &database.BlockedSkylink{
+		Hash:           database.Hash{hash1},
+		TimestampAdded: time.Now().UTC(),
+	})
+
+	// assert the database contains our one entry
+	hashes, _, err := s.staticDB.BlockedHashes(1, 0, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hashes) != 1 {
+		t.Fatalf("unexpected number of blocked hashes, %v != 1", len(hashes))
+	}
 
 	// start the syncer
-	s.Start()
+	err = s.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
 
-	// check in a loop whether we've synced at least once
+	// check in a loop whether we're filling up the database
 	err = build.Retry(100, 100*time.Millisecond, func() error {
-		skyd.mu.Lock()
-		numRequests := len(skyd.blockHashesReqs)
-		skyd.mu.Unlock()
-		if numRequests > 0 {
-			return nil
+		hashes, _, err := s.staticDB.BlockedHashes(1, 0, 2)
+		if err != nil {
+			t.Fatal(err)
 		}
-		return errors.New("no block requests received yet")
+		if len(hashes) == 1 {
+			return errors.New("no new hashes yet")
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatal("unexpected error", err)
 	}
 
-	// assert there's at least one request with 'batchsize' hashes
-	skyd.mu.Lock()
-	defer skyd.mu.Unlock()
-	requests := skyd.blockHashesReqs
-	if len(requests[0]) != blocker.BlockBatchSize {
-		t.Fatal("expected at least one block request that submitted 'batchsize' hashes")
+	// fetch hashes to block, we expect to see two
+	toBlock, err := s.staticDB.HashesToBlock(time.Time{})
+	if err != nil {
+		t.Fatal(err)
 	}
-}
+	if len(toBlock) != 2 {
+		t.Fatalf("unexpected number of hashes to block, %v != 2", len(toBlock))
+	}
 
-// testSyncBlocklistWithSkyd is a unit test for the 'syncBlocklistWithSkyd' on
-// the Syncer.
-func testSyncBlocklistWithSkyd(t *testing.T) {
-	// create a context
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
-	defer cancel()
+	// assert the second one is our hash that got synced
+	if toBlock[1].String() != hash2.String() {
+		t.Fatalf("unexpected hash %v != %v", toBlock[1].String(), hash2.String())
+	}
 
-	// create a mock of skyd
-	skyd := &mockSkyd{}
-
-	// create a test syncer
-	s, err := newTestSyncer(ctx, skyd, "testSyncBlocklistWithSkyd")
+	// fetch the entire database entry
+	bsl, err := s.staticDB.FindByHash(context.Background(), toBlock[1])
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// fetch skyd's blocklist
-	hashes, err := skyd.Blocklist()
-	if err != nil {
-		t.Fatal(err)
+	// asser the reporter is properly filled
+	if bsl.Reporter.Name != server.URL {
+		t.Fatalf("unexpected reporter '%v'", bsl.Reporter.Name)
 	}
 
-	// build the existing lookup table
-	existing := buildLookupTable(hashes)
-
-	// fake an update which contains one unknown hash
-	hash := randomHash()
-	hashes = append(hashes, hash)
-	update := buildLookupTable(hashes)
-
-	// sync the diff with skyd
-	added, err := s.syncBlocklistWithSkyd(existing, update)
-	if err != nil {
-		t.Fatal(err)
+	// assert the tags are filled
+	if len(bsl.Tags) != 1 {
+		t.Fatalf("unexpected number of tags, %v != 1", len(bsl.Tags))
 	}
-	if added != 1 {
-		t.Fatal("expected one hash to get added")
-	}
-
-	// assert the received block request in skyd
-	if len(skyd.blockHashesReqs) != 1 {
-		t.Fatal("expected one call to skyd's block endpoint")
-	}
-	if len(skyd.blockHashesReqs[0]) != 1 {
-		t.Fatal("expected one hash to be added")
-	}
-	if skyd.blockHashesReqs[0][0].String() != hash.String() {
-		t.Fatalf("expected %v to get added, but instead it was %v", hash.String(), skyd.blockHashesReqs[0][0].String())
+	if bsl.Tags[0] != "tag_2" {
+		t.Fatalf("unexpected tag, %v != tag_2", bsl.Tags[0])
 	}
 }
 
 // newTestSyncer returns a test syncer object.
-func newTestSyncer(ctx context.Context, skydAPI skyd.API, dbName string) (*Syncer, error) {
+func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
 	// create database
-	db, err := database.NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
+	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
 		Username: "admin",
 		Password: "aO4tV5tC1oU3oQ7u",
 	}, logger)
@@ -239,20 +187,18 @@ func newTestSyncer(ctx context.Context, skydAPI skyd.API, dbName string) (*Synce
 		return nil, err
 	}
 
+	// Define a new context with a timeout to handle the database setup.
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
 	// purge it
 	err = db.Purge(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	// create the blocker
-	b, err := blocker.New(ctx, skydAPI, db, logger)
-	if err != nil {
-		return nil, err
-	}
-
 	// create a syncer
-	return New(ctx, b, skydAPI, db, nil, logger)
+	return New(context.Background(), db, portalURLs, logger)
 }
 
 // randomHash returns a random hash
