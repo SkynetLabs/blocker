@@ -173,13 +173,14 @@ func (db *DB) Close() error {
 // CreateBlockedSkylink creates a new skylink. If the skylink already exists it
 // does nothing.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
-	// Ensure the hash is set
-	if skylink.Hash == (Hash{}) {
-		return errors.New("unexpected blocked skylink, 'hash' is not set")
+	// Ensure the given object has all required properties set
+	err := skylink.Validate()
+	if err != nil {
+		return errors.AddContext(err, "unexpected blocked skylink")
 	}
 
 	// Insert the skylink
-	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
+	_, err = db.staticSkylinks.InsertOne(ctx, skylink)
 	if isDuplicateKey(err) {
 		return ErrSkylinkExists
 	}
@@ -196,10 +197,11 @@ func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSk
 	// Convenience variables
 	logger := db.staticLogger
 
-	// Ensure the hash is set on all blocked skylinks
+	// Ensure all required properties are set on the given blocked skylinks
 	for _, skylink := range skylinks {
-		if skylink.Hash == (Hash{}) {
-			return 0, errors.New("unexpected BlockedSkylink, 'hash' is not set")
+		err := skylink.Validate()
+		if err != nil {
+			return 0, errors.AddContext(err, "unexpected blocked skylink")
 		}
 	}
 
@@ -209,6 +211,7 @@ func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSk
 		docs[i] = doc
 	}
 
+	// Insert all objects in the database
 	opts := options.InsertMany()
 	opts.SetOrdered(false)
 	res, err := db.staticSkylinks.InsertMany(ctx, docs, opts)

@@ -15,9 +15,8 @@ and/or log files.
 
 A portal operator can bootstrap the blocklist by defining a set of portal urls
 in the environment variable `BLOCKER_PORTALS_SYNC`, which is a comma separated
-list of portal URLs. The blocker will periodically fetch the blocklist and
-compare it against the local database, it will add the missing hashes to the
-local database.
+list of portal URLs. The blocker will periodically fetch the blocklist and merge
+it with the local database of hashes.
 
 # AllowList
 

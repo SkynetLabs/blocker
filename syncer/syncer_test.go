@@ -67,12 +67,6 @@ func testRandomHash(t *testing.T) {
 	}
 }
 
-type mockAPI struct{}
-
-func (api mockAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	panic("wtf")
-}
-
 // testSyncer is an integration test that syncs siasky.net's blocklist with our
 // mock skyd instance
 func testSyncer(t *testing.T) {

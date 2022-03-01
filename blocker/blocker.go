@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	// BlockBatchSize is the max number of (skylink) hashes to be sent for
+	// blockBatchSize is the max number of (skylink) hashes to be sent for
 	// blocking simultaneously.
-	BlockBatchSize = 100
+	blockBatchSize = 100
 )
 
 var (
@@ -98,7 +98,7 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 		}
 
 		// calculate the end of the batch range
-		end := start + BlockBatchSize
+		end := start + blockBatchSize
 		if end > len(hashes) {
 			end = len(hashes)
 		}

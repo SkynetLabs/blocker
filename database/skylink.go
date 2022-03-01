@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson/bsontype"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -90,6 +91,18 @@ type BlockedSkylink struct {
 	Tags              []string           `bson:"tags"`
 	TimestampAdded    time.Time          `bson:"timestamp_added"`
 	TimestampReverted time.Time          `bson:"timestamp_reverted"`
+}
+
+// Validate is a small helper function that ensures the required properties are
+// set on the BlockedSkylink object.
+func (bsl *BlockedSkylink) Validate() error {
+	if bsl.Hash == (Hash{}) {
+		return errors.New("missing 'Hash' property")
+	}
+	if bsl.TimestampAdded == (time.Time{}) {
+		return errors.New("missing 'TimestampAdded' property")
+	}
+	return nil
 }
 
 // Reporter is a person who reported that a given skylink should be blocked.

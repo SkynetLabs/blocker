@@ -121,7 +121,7 @@ func main() {
 
 	// Create the syncer.
 	portalURLs := loadPortalURLs()
-	sync, err := syncer.New(ctx, bl, skydAPI, db, portalURLs, logger)
+	sync, err := syncer.New(ctx, db, portalURLs, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate syncer"))
 	}
