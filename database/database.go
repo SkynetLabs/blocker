@@ -8,7 +8,6 @@ import (
 
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
-	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
@@ -135,19 +134,6 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 		staticSkylinks:  db.Collection(collSkylinks),
 		staticLogger:    logger,
 	}
-
-	// Run compat code
-	err = cdb.compatTransformSkylinkToHash(dbCtx)
-	if err != nil {
-		// We do not error out if we failed to run this compat code. We log it
-		// as a critical, but this should not prevent the blocker from running.
-		logger.Errorf(`[CRITICAL] failed to successfully run 'compatTransformSkylinkToHash', err: %v`, err)
-	}
-
-	// TODO: once the above compat code ran on the database, and the code was
-	// converted to handle hashes and not skylinks, new compat code has to be
-	// written to remove the index on 'skylink' and drop the field from all
-	// documents in our database
 
 	return cdb, nil
 }
@@ -370,73 +356,6 @@ func (db *DB) HashesToRetry() ([]Hash, error) {
 		hashes[i] = doc.Hash
 	}
 	return hashes, nil
-}
-
-// compatTransformSkylinkToHash is some compat code that transforms skylinks in
-// the database to hashes. Skylinks should not be persisted in their plain form
-// in the database.
-func (db *DB) compatTransformSkylinkToHash(ctx context.Context) error {
-	collSkylinks := db.staticDB.Collection(collSkylinks)
-
-	// define a filter that matches documents with skylink and no hash
-	filter := bson.D{{"$and", []interface{}{
-		bson.D{{"skylink", bson.M{"$exists": true}}},
-		bson.D{{"$or", []interface{}{
-			bson.D{{"hash", nil}},
-			bson.D{{"hash", bson.M{"$exists": false}}},
-			bson.D{{"hash", Hash{}}},
-		}}},
-	}}}
-
-	// find all documents where the skyink has to be transformed to a hash
-	docs, err := db.find(ctx, filter)
-	if err != nil {
-		return err
-	}
-
-	// return if no docs need to be transformed
-	if len(docs) == 0 {
-		return nil
-	}
-
-	// range over the documents and try to set the hash property on each one
-	for _, doc := range docs {
-		var sl skymodules.Skylink
-		err := sl.LoadString(doc.Skylink)
-		if err != nil {
-			// should be impossible
-			db.staticLogger.Errorf("failed to decode Skylink '%v'", doc.Skylink)
-			continue
-		}
-
-		// sanity check the skylink is not a v2 skylink, we can't update that
-		// document because it is illegal to call 'MerkleRoot' on a v2 skylink,
-		// the database should not contain v2 skylinks in the Skylink field
-		if sl.IsSkylinkV2() {
-			db.staticLogger.Errorf("failed to convert document with Skylink '%v', which is a v2 skylink", doc.Skylink)
-			continue
-		}
-
-		// define a filter that matches this precise document, ensuring the hash
-		// is unset, seeing as this code might be running concurrently, it might
-		// have been updated by another process in the mean time
-		filter = bson.D{{"$and", []interface{}{
-			bson.D{{"_id", doc.ID}},
-			bson.D{{"$or", []interface{}{
-				bson.D{{"hash", nil}},
-				bson.D{{"hash", bson.M{"$exists": false}}},
-				bson.D{{"hash", Hash{}}},
-			}}},
-		}}}
-		value := bson.M{"$set": bson.M{"hash": NewHash(sl)}}
-		_, err = collSkylinks.UpdateOne(ctx, filter, value)
-		if err != nil {
-			db.staticLogger.Errorf("failed to update hash of document with ID '%v', err %v", doc.ID, err)
-			continue
-		}
-	}
-
-	return nil
 }
 
 // find wraps the `Find` function on the Skylinks collection and returns an
