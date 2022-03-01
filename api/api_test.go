@@ -74,8 +74,21 @@ func (at *apiTester) blocklistGET(sort *string, offset, limit *int) (BlocklistGE
 		values.Set("sort", *sort)
 	}
 
+	// execute the request
+	var blg BlocklistGET
+	err := at.get("/blocklist", values, &blg)
+	if err != nil {
+		return BlocklistGET{}, err
+	}
+	return blg, nil
+}
+
+// get is a helper function that executes a GET request on the given endpoint
+// withe provided query values. It allows passing an object into which we'll
+// unmarshal the response body
+func (at *apiTester) get(endpoint string, query url.Values, obj interface{}) error {
 	// create the request
-	url := fmt.Sprintf("/blocklist?%s", values.Encode())
+	url := fmt.Sprintf("%s?%s", endpoint, query.Encode())
 	req := httptest.NewRequest(http.MethodGet, url, nil)
 
 	// create a recorder and execute the request
@@ -87,12 +100,18 @@ func (at *apiTester) blocklistGET(sort *string, offset, limit *int) (BlocklistGE
 	// handle the response
 	data, err := ioutil.ReadAll(res.Body)
 	if err != nil {
-		return BlocklistGET{}, err
+		return err
 	}
-	var blg BlocklistGET
-	err = json.Unmarshal(data, &blg)
+
+	// return an error if the status code is not in the 200s
+	if res.StatusCode > 300 {
+		return fmt.Errorf("GET request to '%s' with status %d, response body: %v", endpoint, res.StatusCode, string(data))
+	}
+
+	// unmarshal the body into the given object
+	err = json.Unmarshal(data, obj)
 	if err != nil {
-		return BlocklistGET{}, err
+		return err
 	}
-	return blg, nil
+	return nil
 }
