@@ -13,10 +13,12 @@ and/or log files.
 
 # Sync
 
-A portal operator can bootstrap the blocklist by defining a set of portal urls
-in the environment variable `BLOCKER_PORTALS_SYNC`, which is a comma separated
-list of portal URLs. The blocker will periodically fetch the blocklist and merge
-it with the local database of hashes.
+A portal operator can bootstrap his portal's blocklist by defining a set of
+portal urls to sync with. The portal urls have to be defined in the environment
+variable `BLOCKER_PORTALS_SYNC`, which is a comma separated list of portal URLs.
+
+The blocker will periodically sync the blocklist and merge it with the local
+database of hashes.
 
 # AllowList
 

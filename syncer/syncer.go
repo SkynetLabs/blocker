@@ -37,8 +37,8 @@ type (
 		// fetch that portal's blocklist, we know we can stop paging
 		lastSyncedHash map[string]string
 
-		staticDB         *database.DB
 		staticCtx        context.Context
+		staticDB         *database.DB
 		staticLogger     *logrus.Logger
 		staticMu         sync.Mutex
 		staticPortalURLs []string
