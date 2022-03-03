@@ -4,8 +4,12 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	url "net/url"
 	"regexp"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/SkynetLabs/blocker/blocker"
@@ -17,10 +21,24 @@ import (
 	"go.sia.tech/siad/crypto"
 )
 
-var (
+const (
 	// maxBodySize defines the maximum size of the POST body when making request
 	// to the block endpoints
 	maxBodySize = int64(1 << 16) // 64kib
+
+	// maxLimit defines the maximum value for the limit parameter used by the
+	// blocklist endpoint
+	maxLimit = 1000
+
+	// sortAscending defines the query string parameter option that can be
+	// passed as 'sort' parameter. If passed the response will contain the
+	// entries sorted by the 'sortBy' parameter in ascending fashion.
+	sortAscending = "asc"
+
+	// sortDescending defines the query string parameter option that can be
+	// passed as 'sort' parameter. If passed the response will contain the
+	// entries sorted by the 'sortBy' parameter in descending fashion.
+	sortDescending = "desc"
 )
 
 type (
@@ -38,6 +56,19 @@ type (
 		// services that interact with the blocker to only deal with hashes
 		// instead of skylinks.
 		Hash crypto.Hash `json:"hash"`
+	}
+
+	// BlocklistGET returns a list of blocked hashes
+	BlocklistGET struct {
+		Entries []BlockedHash `json:"entries"`
+		HasMore bool          `json:"hasmore"`
+	}
+
+	// BlockedHash describes a blocked hash along with the set of tags it was
+	// reported with
+	BlockedHash struct {
+		Hash crypto.Hash `json:"hash"`
+		Tags []string    `json:"tags"`
 	}
 
 	// BlockWithPoWPOST describes a request to the /blockpow endpoint
@@ -94,6 +125,39 @@ func (sl *skylink) UnmarshalJSON(b []byte) error {
 	}
 	*sl = skylink(slNormalized.String())
 	return nil
+}
+
+// blocklistGET returns a list of blocked hashes and associated tags. This route
+// allows paging through the result set by the following query string
+// parameters: 'sort', 'offset' and 'limit', which default to 'asc', 0 and 1000.
+// The results are sorted on the 'timestamp_added' field, but the caller can
+// request to see the newest results first. The default limit also serves as a
+// limit.
+func (api *API) blocklistGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	// parse offset and limit parameters
+	sort, offset, limit, err := parseListParameters(r.URL.Query())
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		return
+	}
+
+	blocked, more, err := api.staticDB.BlockedHashes(sort, offset, limit)
+	if err != nil {
+		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		return
+	}
+
+	hashes := make([]BlockedHash, len(blocked))
+	for i, bh := range blocked {
+		hashes[i] = BlockedHash{
+			Hash: bh.Hash.Hash,
+			Tags: bh.Tags,
+		}
+	}
+	skyapi.WriteJSON(w, BlocklistGET{
+		Entries: hashes,
+		HasMore: more,
+	})
 }
 
 // healthGET returns the status of the service
@@ -312,4 +376,50 @@ func extractSkylinkHash(skylink string) (string, error) {
 		return m[1], nil
 	}
 	return m[2], nil
+}
+
+// parseListParameters parses sort, offset and limit from the given query. If
+// not present, they default to 1 ('asc'), 0 and 1000 respectively.
+func parseListParameters(query url.Values) (int, int, int, error) {
+	var err error
+
+	// parse sort
+	sort := 1
+	sortStr := strings.ToLower(query.Get("sort"))
+	if sortStr != "" {
+		if !(sortStr == sortAscending || sortStr == sortDescending) {
+			return 0, 0, 0, fmt.Errorf("invalid value for 'sort' parameter, can only be '%v' or '%v'", sortAscending, sortDescending)
+		}
+		if sortStr == sortDescending {
+			sort = -1
+		}
+	}
+
+	// parse offset
+	var offset int
+	offsetStr := query.Get("offset")
+	if offsetStr != "" {
+		offset, err = strconv.Atoi(offsetStr)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if offset < 0 {
+			return 0, 0, 0, fmt.Errorf("invalid value for 'offset' parameter, can not be negative")
+		}
+	}
+
+	// parse limit
+	limit := maxLimit
+	limitStr := query.Get("limit")
+	if limitStr != "" {
+		limit, err = strconv.Atoi(limitStr)
+		if err != nil {
+			return 0, 0, 0, err
+		}
+		if limit < 1 || limit > maxLimit {
+			return 0, 0, 0, fmt.Errorf("invalid value for 'limit' parameter, must be between 1 and %v", maxLimit)
+		}
+	}
+
+	return sort, offset, limit, nil
 }

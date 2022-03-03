@@ -4,16 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"io/ioutil"
+	"fmt"
 	"net/http"
+	url "net/url"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
-	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 var (
@@ -87,6 +86,10 @@ func TestHandlers(t *testing.T) {
 		{
 			name: "HandleBlockRequest",
 			test: testHandleBlockRequest,
+		},
+		{
+			name: "HandleBlocklistGET",
+			test: testHandleBlocklistGET,
 		},
 	}
 	for _, test := range tests {
@@ -217,6 +220,200 @@ func testHandleBlockRequest(t *testing.T) {
 	}
 }
 
+// testHandleBlocklistGET verifies the GET /blocklist endpoint
+func testHandleBlocklistGET(t *testing.T) {
+	// create a context with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
+	// create a new test API
+	skyd := &mockSkyd{}
+	api, err := newTestAPI("HandleBlockRequest", skyd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	apiTester := newAPITester(api)
+
+	// fetch the blocklist and assert it is empty
+	bl, err := apiTester.blocklistGET(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected")
+	}
+	if len(bl.Entries) != 0 {
+		t.Fatalf("unexpected number of entries, %v != 0", len(bl.Entries))
+	}
+
+	// insert 20 documents
+	for i := 0; i < 20; i++ {
+		tag := fmt.Sprintf("tag_%d", i)
+		skylink := fmt.Sprintf("skylink_%d", i)
+		offset := time.Duration(i) * time.Second
+		err = api.staticDB.CreateBlockedSkylink(ctx, &database.BlockedSkylink{
+			Skylink: skylink,
+			Hash:    database.HashBytes([]byte(skylink)),
+			Reporter: database.Reporter{
+				Name: "John Doe",
+			},
+			Tags:           []string{tag},
+			TimestampAdded: time.Now().UTC().Add(offset),
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// assert base case
+	bl, err = apiTester.blocklistGET(nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 20 {
+		t.Fatalf("unexpected number of entries, %v != 20", len(bl.Entries))
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+
+	// assert default sort
+	if len(bl.Entries[0].Tags) != 1 || bl.Entries[0].Tags[0] != "tag_0" ||
+		len(bl.Entries[1].Tags) != 1 || bl.Entries[1].Tags[0] != "tag_1" {
+		t.Fatal("unexpected sort", bl)
+	}
+
+	// assert limit of 1
+	limit := 1
+	bl, err = apiTester.blocklistGET(nil, nil, &limit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 1 {
+		t.Fatalf("unexpected number of entries, %v != 1", len(bl.Entries))
+	}
+	if !bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+
+	// assert offset of 1
+	offset := 1
+	bl, err = apiTester.blocklistGET(nil, &offset, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 19 {
+		t.Fatalf("unexpected number of entries, %v != 19", len(bl.Entries))
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+	if len(bl.Entries[0].Tags) != 1 || bl.Entries[0].Tags[0] != "tag_1" {
+		t.Fatal("unexpected first entry", bl.Entries[0])
+	}
+
+	// assert sort
+	sort := "desc"
+	bl, err = apiTester.blocklistGET(&sort, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bl.Entries) != 20 {
+		t.Fatalf("unexpected number of entries, %v != 20", len(bl.Entries))
+	}
+	if bl.HasMore {
+		t.Fatal("unexpected", bl)
+	}
+	// assert 'desc' sort
+	if len(bl.Entries[0].Tags) != 1 || bl.Entries[0].Tags[0] != "tag_19" ||
+		len(bl.Entries[1].Tags) != 1 || bl.Entries[1].Tags[0] != "tag_18" {
+		t.Fatal("unexpected sort", bl)
+	}
+
+	// assert pagination
+	offset = 0
+	limit = 5
+	numCalls := 0
+	hasmore := true
+	var entries []BlockedHash
+	for hasmore {
+		bl, err = apiTester.blocklistGET(nil, &offset, &limit)
+		if err != nil {
+			t.Fatal(err)
+		}
+		numCalls++
+		offset += limit
+		entries = append(entries, bl.Entries...)
+		hasmore = bl.HasMore
+	}
+	if numCalls != 4 {
+		t.Fatalf("unexpected number of calls, %v != 4", numCalls)
+	}
+	if len(entries) != 20 {
+		t.Fatalf("unexpected number of entries, %v != 20", len(entries))
+	}
+}
+
+// TestParseListParams is a unit test that covers parseListParameters
+func TestParseListParams(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		in  []interface{}
+		out []int
+		err string
+	}{
+		// // valid cases
+		{[]interface{}{nil, nil, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{"asc", nil, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{"desc", nil, nil}, []int{-1, 0, 1000}, ""},
+		{[]interface{}{"ASC", nil, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{"DESC", nil, nil}, []int{-1, 0, 1000}, ""},
+		{[]interface{}{nil, 0, nil}, []int{1, 0, 1000}, ""},
+		{[]interface{}{nil, 10, nil}, []int{1, 10, 1000}, ""},
+		{[]interface{}{nil, nil, 1}, []int{1, 0, 1}, ""},
+		{[]interface{}{nil, nil, 10}, []int{1, 0, 10}, ""},
+
+		// invalid cases
+		{[]interface{}{"ttt", nil, nil}, []int{0, 0, 0}, "invalid value for 'sort'"},
+		{[]interface{}{nil, -1, nil}, []int{0, 0, 0}, "invalid value for 'offset'"},
+		{[]interface{}{nil, nil, 0}, []int{0, 0, 0}, "invalid value for 'limit'"},
+		{[]interface{}{nil, nil, 1001}, []int{0, 0, 0}, "invalid value for 'limit'"},
+	}
+
+	// Test set cases to ensure known edge cases are always handled
+	for _, test := range tests {
+		params := []string{"sort", "offset", "limit"}
+
+		values := url.Values{}
+		for i, key := range params {
+			if test.in[i] != nil {
+				values.Set(key, fmt.Sprint(test.in[i]))
+			}
+		}
+
+		sort, offset, limit, err := parseListParameters(values)
+		if test.err != "" && err == nil {
+			t.Fatalf("Expected error containing '%v' but was nil", test.err)
+		}
+		if test.err != "" && !strings.Contains(err.Error(), test.err) {
+			t.Fatalf("Expected error containing '%v' but was %v", test.err, err.Error())
+		}
+		if test.err == "" && err != nil {
+			t.Fatalf("Expected no error, but received '%v'", err.Error())
+		}
+
+		result := []int{sort, offset, limit}
+		for i := range params {
+			if result[i] != test.out[i] {
+				t.Log("Result", result)
+				t.Log("Expected", test.out)
+				t.Fatal("Unexpected")
+			}
+		}
+	}
+}
+
 // TestVerifySkappReport verifies a report directly generated from the abuse
 // skapp.
 func TestVerifySkappReport(t *testing.T) {
@@ -232,37 +429,4 @@ func TestVerifySkappReport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-}
-
-// newTestAPI returns a new API instance
-func newTestAPI(dbName string, skyd skyd.API) (*API, error) {
-	// create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
-	defer cancel()
-
-	// create a nil logger
-	logger := logrus.New()
-	logger.Out = ioutil.Discard
-
-	// create database
-	db, err := database.NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
-		Username: "admin",
-		Password: "aO4tV5tC1oU3oQ7u",
-	}, logger)
-	if err != nil {
-		return nil, err
-	}
-
-	// purge the database
-	err = db.Purge(ctx)
-	if err != nil {
-		panic(err)
-	}
-
-	// create the API
-	api, err := New(skyd, db, logger)
-	if err != nil {
-		return nil, err
-	}
-	return api, nil
 }

@@ -27,6 +27,7 @@ var (
 // buildHTTPRoutes registers all HTTP routes and their handlers.
 func (api *API) buildHTTPRoutes() {
 	api.staticRouter.GET("/health", api.healthGET)
+	api.staticRouter.GET("/blocklist", api.blocklistGET)
 	api.staticRouter.POST("/block", api.blockPOST)
 	api.staticRouter.GET("/powblock", api.blockWithPoWGET)
 	api.staticRouter.POST("/powblock", api.blockWithPoWPOST)
