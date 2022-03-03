@@ -56,6 +56,7 @@ var (
 
 	// collSkylinks defines the name of the skylinks collection
 	collSkylinks = "skylinks"
+
 	// collAllowlist defines the name of the allowlist collection
 	collAllowlist = "allowlist"
 )

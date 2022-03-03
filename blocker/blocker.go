@@ -216,6 +216,13 @@ func (bl *Blocker) managedBlock() error {
 	return nil
 }
 
+// managedLatestBlockTime returns the latest block time
+func (bl *Blocker) managedLatestBlockTime() time.Time {
+	bl.staticMu.Lock()
+	defer bl.staticMu.Unlock()
+	return bl.latestBlockTime
+}
+
 // managedRetryHashess fetches all blocked skylinks that failed to get blocked
 // the first time and retries them.
 func (bl *Blocker) managedRetryHashes() error {
@@ -245,13 +252,6 @@ func (bl *Blocker) managedRetryHashes() error {
 	// retry loop
 
 	return nil
-}
-
-// managedLatestBlockTime returns the latest block time
-func (bl *Blocker) managedLatestBlockTime() time.Time {
-	bl.staticMu.Lock()
-	defer bl.staticMu.Unlock()
-	return bl.latestBlockTime
 }
 
 // managedUpdateLatestBlockTime updates the latest block time
