@@ -117,7 +117,10 @@ func main() {
 	}
 
 	// Start blocker.
-	bl.Start()
+	err = bl.Start()
+	if err != nil {
+		log.Fatal(errors.AddContext(err, "failed to start blocker"))
+	}
 
 	// Create the syncer.
 	portalURLs := loadPortalURLs()

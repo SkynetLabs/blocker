@@ -138,9 +138,21 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 
 // Start launches the two backgrounds that periodically scan for new hashes to
 // block or retry hashes that failed to get blocked the first time around.
-func (bl *Blocker) Start() {
+func (bl *Blocker) Start() error {
+	bl.staticMu.Lock()
+	defer bl.staticMu.Unlock()
+
+	// assert 'Start' is only called once
+	if bl.started {
+		return errors.New("blocker already started")
+	}
+	bl.started = true
+
+	// start the loops
 	go bl.threadedBlockLoop()
 	go bl.threadedRetryLoop()
+
+	return nil
 }
 
 // threadedBlockLoop holds the main block loop
