@@ -3,11 +3,13 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"net/http"
 	url "net/url"
 
 	"gitlab.com/NebulousLabs/errors"
+	"gitlab.com/SkynetLabs/skyd/node/api"
 )
 
 // Client is a helper struct that gets initialised using a portal url. It
@@ -55,23 +57,37 @@ func (c *Client) get(endpoint string, query url.Values, obj interface{}) error {
 	if err != nil {
 		return err
 	}
-	defer res.Body.Close()
-
-	// handle the response
-	data, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return err
-	}
+	defer drainAndClose(res.Body)
 
 	// return an error if the status code is not in the 200s
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("GET request to '%s' with status %d, response body: %v", endpoint, res.StatusCode, string(data))
+		return fmt.Errorf("GET request to '%s' with status %d error %v", endpoint, res.StatusCode, readAPIError(res.Body))
 	}
 
-	// unmarshal the body into the given object
-	err = json.Unmarshal(data, obj)
+	// handle the response body
+	err = json.NewDecoder(res.Body).Decode(obj)
 	if err != nil {
 		return err
 	}
 	return nil
+}
+
+// drainAndClose reads rc until EOF and then closes it. drainAndClose should
+// always be called on HTTP response bodies, because if the body is not fully
+// read, the underlying connection can't be reused.
+func drainAndClose(rc io.ReadCloser) {
+	io.Copy(ioutil.Discard, rc)
+	rc.Close()
+}
+
+// readAPIError decodes and returns an api.Error.
+func readAPIError(r io.Reader) error {
+	var apiErr api.Error
+
+	err := json.NewDecoder(r).Decode(&apiErr)
+	if err != nil {
+		return errors.AddContext(err, "could not read error response")
+	}
+
+	return apiErr
 }

@@ -212,13 +212,28 @@ func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSk
 		docs[i] = doc
 	}
 
-	// Insert all objects in the database
+	// Create insert options, we set ordered to false to ensure a single write
+	// failure doesn't prevent the other writes from going through. We need this
+	// because we expect duplicates and want to simply ignore them.
 	opts := options.InsertMany()
 	opts.SetOrdered(false)
+
+	// Insert all objects in the database
 	res, err := db.staticSkylinks.InsertMany(ctx, docs, opts)
-	if err != nil && !isDuplicateKey(err) {
-		logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", err)
-		return 0, err
+
+	// Handle the error, we want to ignore all duplicate key errors
+	if err != nil {
+		bWriteErr, ok := err.(mongo.BulkWriteException)
+		if !ok {
+			logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", err)
+			return 0, err
+		}
+		for _, bWriteError := range bWriteErr.WriteErrors {
+			if !isDuplicateKey(bWriteError) {
+				logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", bWriteError)
+				return 0, err
+			}
+		}
 	}
 
 	return len(res.InsertedIDs), nil

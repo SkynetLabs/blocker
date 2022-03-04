@@ -99,7 +99,7 @@ func (bsl *BlockedSkylink) Validate() error {
 	if bsl.Hash == (Hash{}) {
 		return errors.New("missing 'Hash' property")
 	}
-	if bsl.TimestampAdded == (time.Time{}) {
+	if bsl.TimestampAdded.IsZero() {
 		return errors.New("missing 'TimestampAdded' property")
 	}
 	return nil
