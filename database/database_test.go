@@ -2,6 +2,7 @@ package database
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
@@ -14,26 +15,8 @@ import (
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"go.sia.tech/siad/crypto"
 )
-
-// newTestDB creates a new database for a given test's name.
-func newTestDB(ctx context.Context, dbName string) *DB {
-	dbName = strings.ReplaceAll(dbName, "/", "-")
-	logger := logrus.New()
-	logger.Out = ioutil.Discard
-	db, err := NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
-		Username: "admin",
-		Password: "aO4tV5tC1oU3oQ7u",
-	}, logger)
-	if err != nil {
-		panic(err)
-	}
-	err = db.Purge(ctx)
-	if err != nil {
-		panic(err)
-	}
-	return db
-}
 
 // TestDatabase runs the database unit tests.
 func TestDatabase(t *testing.T) {
@@ -65,6 +48,14 @@ func TestDatabase(t *testing.T) {
 		{
 			name: "MarkAsFailed",
 			test: testMarkAsFailed,
+		},
+		{
+			name: "HasIndex",
+			test: testHasIndex,
+		},
+		{
+			name: "DropIndex",
+			test: testDropIndex,
 		},
 	}
 	for _, test := range tests {
@@ -181,9 +172,9 @@ func testIsAllowListedSkylink(t *testing.T) {
 	defer db.Close()
 
 	// Add a skylink in the allow list
-	skylink := "_B19BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1kaA"
-	_, err := db.staticAllowList.InsertOne(ctx, &AllowListedSkylink{
-		Skylink:        skylink,
+	hash := randomHash()
+	err := db.CreateAllowListedSkylink(ctx, &AllowListedSkylink{
+		Hash:           Hash{hash},
 		Description:    "test skylink",
 		TimestampAdded: time.Now().UTC(),
 	})
@@ -192,7 +183,7 @@ func testIsAllowListedSkylink(t *testing.T) {
 	}
 
 	// Check the result of 'IsAllowListed'
-	allowListed, err := db.IsAllowListed(ctx, skylink, "")
+	allowListed, err := db.IsAllowListed(ctx, hash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,8 +192,8 @@ func testIsAllowListedSkylink(t *testing.T) {
 	}
 
 	// Check against a different skylink
-	skylink = "ABC9BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1ABC"
-	allowListed, err = db.IsAllowListed(ctx, skylink, "")
+	hash2 := randomHash()
+	allowListed, err = db.IsAllowListed(ctx, hash2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,19 +221,25 @@ func testMarkAsSucceeded(t *testing.T) {
 	}
 
 	// insert a regular document and one that was marked as failed
-	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash:           HashBytes([]byte("skylink_1")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
-	db.staticSkylinks.InsertOne(ctx, BlockedSkylink{
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash:           HashBytes([]byte("skylink_2")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 		Failed:         true,
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	toRetry, err := db.HashesToRetry()
 	if err != nil {
@@ -342,6 +339,66 @@ func testMarkAsFailed(t *testing.T) {
 	// no need to mark them as succeeded, the other unit test covers that
 }
 
+// testHasIndex is a unit test that verifies the functionality of the hasIndex
+// helper function
+func testHasIndex(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// check whether we can find an index we expect to be there
+	found, err := hasIndex(ctx, db.staticSkylinks, "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !found {
+		t.Fatal("unexpected")
+	}
+
+	// check whether the output is correct for a made up index name
+	found, err = hasIndex(ctx, db.staticSkylinks, "nonexistingindexname")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if found {
+		t.Fatal("unexpected")
+	}
+}
+
+// testDropIndex is a unit test that verifies the functionality of the dropIndex
+// helper function
+func testDropIndex(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// check whether dropIndex errors out on an unknown index
+	dropped, err := dropIndex(ctx, db.staticSkylinks, "nonexistingindexname")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if dropped {
+		t.Fatal("unexpected")
+	}
+
+	// check the output for an existing index
+	dropped, err = dropIndex(ctx, db.staticSkylinks, "hash")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !dropped {
+		t.Fatal("unexpected")
+	}
+}
+
 // define a helper function to decode a skylink as string into a skylink obj
 func skylinkFromString(skylink string) (sl skymodules.Skylink) {
 	err := sl.LoadString(skylink)
@@ -349,4 +406,30 @@ func skylinkFromString(skylink string) (sl skymodules.Skylink) {
 		panic(err)
 	}
 	return
+}
+
+// newTestDB creates a new database for a given test's name.
+func newTestDB(ctx context.Context, dbName string) *DB {
+	dbName = strings.ReplaceAll(dbName, "/", "-")
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
+	db, err := NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
+		Username: "admin",
+		Password: "aO4tV5tC1oU3oQ7u",
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+	err = db.Purge(ctx)
+	if err != nil {
+		panic(err)
+	}
+	return db
+}
+
+// randomHash returns a random hash
+func randomHash() crypto.Hash {
+	var h crypto.Hash
+	rand.Read(h[:])
+	return h
 }

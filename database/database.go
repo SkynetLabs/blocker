@@ -13,15 +13,16 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
+	"go.sia.tech/siad/crypto"
 )
 
 const (
 	// MongoDefaultTimeout is the timeout for the context used in testing
 	// whenever a context is sent to mongo
-	MongoDefaultTimeout = time.Minute
+	MongoDefaultTimeout = 10 * time.Minute
 
 	// mongoIndexCreateTimeout is the timeout used when creating indices
-	mongoIndexCreateTimeout = 10 * time.Second
+	mongoIndexCreateTimeout = 10 * time.Minute
 )
 
 var (
@@ -32,6 +33,10 @@ var (
 	// ErrIndexCreateFailed is returned when an error occurred when trying to
 	// ensure an index
 	ErrIndexCreateFailed = errors.New("failed to create index")
+
+	// ErrIndexDropFailed is returned when an error occurred when trying to
+	// drop an index
+	ErrIndexDropFailed = errors.New("failed to drop an index")
 
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
@@ -56,8 +61,10 @@ var (
 
 	// collSkylinks defines the name of the skylinks collection
 	collSkylinks = "skylinks"
+
 	// collAllowlist defines the name of the allowlist collection
 	collAllowlist = "allowlist"
+
 	// collLatestBlockTimestamps collLatestBlockTimestamps
 	collLatestBlockTimestamps = "latest_block_timestamps"
 )
@@ -210,14 +217,8 @@ func (db *DB) FindByHash(ctx context.Context, hash Hash) (*BlockedSkylink, error
 }
 
 // IsAllowListed returns whether the given skylink is on the allow list.
-func (db *DB) IsAllowListed(ctx context.Context, skylink, hash string) (bool, error) {
-	res := db.staticAllowList.FindOne(
-		ctx,
-		bson.D{{"$or", []interface{}{
-			bson.M{"skylink": skylink},
-			bson.M{"hash": hash},
-		}}},
-	)
+func (db *DB) IsAllowListed(ctx context.Context, hash crypto.Hash) (bool, error) {
+	res := db.staticAllowList.FindOne(ctx, bson.M{"hash": hash.String()})
 	if isDocumentNotFound(res.Err()) {
 		return false, nil
 	}
@@ -463,9 +464,13 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 		},
 	}
 
-	icOpts := options.CreateIndexes().SetMaxTime(mongoIndexCreateTimeout)
+	// build the options
+	opts := options.CreateIndexes()
+	opts.SetMaxTime(mongoIndexCreateTimeout)
+	opts.SetCommitQuorumString("majority") // defaults to all
 
-	var icErr error
+	// ensure all collections and indices exist
+	var createErr error
 	for collName, models := range schema {
 		coll, err := ensureCollection(ctx, db, collName)
 		if err != nil {
@@ -474,28 +479,76 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 		}
 
 		iv := coll.Indexes()
-		names, err := iv.CreateMany(ctx, models, icOpts)
+		names, err := iv.CreateMany(ctx, models, opts)
 		if err != nil {
 			// if the index creation fails, compose the error but continue to
 			// try and ensure the rest of the database schema
-			icErr = errors.Compose(icErr, errors.AddContext(err, fmt.Sprintf("collection '%v'", collName)))
+			createErr = errors.Compose(createErr, errors.AddContext(err, fmt.Sprintf("collection '%v'", collName)))
 			continue
 		}
+
 		log.Debugf("Ensured index exists: %v | %v", collName, names)
 	}
-	if icErr != nil {
-		return errors.Compose(icErr, ErrIndexCreateFailed)
+	if createErr != nil {
+		createErr = errors.Compose(createErr, ErrIndexCreateFailed)
 	}
 
 	// drop the old indices on 'skylink'
-	_, err1 := db.Collection(collAllowlist).Indexes().DropOne(ctx, "skylink")
-	_, err2 := db.Collection(collSkylinks).Indexes().DropOne(ctx, "skylink")
-	err := errors.Compose(err1, err2)
-	if err != nil {
-		return errors.AddContext(err, "failed droppping 'skylink' index")
+	_, err1 := dropIndex(ctx, db.Collection(collAllowlist), "skylink")
+	_, err2 := dropIndex(ctx, db.Collection(collSkylinks), "skylink")
+	dropErr := errors.Compose(err1, err2)
+	if dropErr != nil {
+		dropErr = errors.Compose(dropErr, ErrIndexDropFailed)
 	}
 
-	return nil
+	return errors.Compose(createErr, dropErr)
+}
+
+// dropIndex is a helper function that drops the index with given name on the
+// given collection
+func dropIndex(ctx context.Context, coll *mongo.Collection, indexName string) (bool, error) {
+	hasIndex, err := hasIndex(ctx, coll, indexName)
+	if err != nil {
+		return false, err
+	}
+
+	if !hasIndex {
+		return false, nil
+	}
+
+	_, err = coll.Indexes().DropOne(ctx, indexName)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// hasIndex is a helper function that returns true if the given collection has
+// an index with given name
+func hasIndex(ctx context.Context, coll *mongo.Collection, indexName string) (bool, error) {
+	idxs := coll.Indexes()
+
+	cur, err := idxs.List(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	var result []bson.M
+	err = cur.All(ctx, &result)
+	if err != nil {
+		return false, err
+	}
+
+	found := false
+	for _, v := range result {
+		for k, v1 := range v {
+			if k == "name" && v1 == indexName {
+				found = true
+			}
+		}
+	}
+	return found, nil
 }
 
 // ensureCollection gets the given collection from the

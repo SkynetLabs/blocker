@@ -259,7 +259,7 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 	}
 
 	// Check whether the skylink is on the allow list
-	if api.isAllowListed(ctx, "", hash.String()) {
+	if api.isAllowListed(ctx, hash) {
 		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
@@ -297,8 +297,8 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 //
 // NOTE: the given skylink is expected to be a v1 skylink, meaning the caller of
 // this function should have tried to resolve the skylink beforehand
-func (api *API) isAllowListed(ctx context.Context, skylink, hash string) bool {
-	allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink, hash)
+func (api *API) isAllowListed(ctx context.Context, hash crypto.Hash) bool {
+	allowlisted, err := api.staticDB.IsAllowListed(ctx, hash)
 	if err != nil {
 		api.staticLogger.Error("failed to verify skylink against the allow list", err)
 		return false
@@ -317,7 +317,7 @@ func (api *API) resolveHash(bp BlockPOST) (crypto.Hash, error) {
 	}
 
 	// if the hash is set, we are done
-	if bp.Hash.String() != "" {
+	if bp.Hash != (crypto.Hash{}) {
 		return bp.Hash, nil
 	}
 
@@ -343,23 +343,11 @@ func (api *API) resolveHash(bp BlockPOST) (crypto.Hash, error) {
 	return crypto.HashObject(skylink.MerkleRoot()), nil
 }
 
-// validate returns an error if the block post object is constructed in an
-// illegal fashion, which can happen if the hash does not match the hash of the
-// skylink's merkle root for instance
+// validate returns an error if the block post object does not contain a hash or
+// skylink
 func (bp *BlockPOST) validate() error {
-	if bp.Hash.String() == "" && bp.Skylink == "" {
+	if bp.Hash == (crypto.Hash{}) && bp.Skylink == "" {
 		return errors.New("hash or skylink is required")
-	}
-	if bp.Hash.String() != "" && bp.Skylink != "" {
-		var sl skymodules.Skylink
-		err := sl.LoadString(string(bp.Skylink))
-		if err != nil {
-			return errors.AddContext(err, "could not load skylink")
-		}
-
-		if crypto.HashObject(sl.MerkleRoot()) != bp.Hash {
-			return errors.New("hash does not match the skylink")
-		}
 	}
 	return nil
 }

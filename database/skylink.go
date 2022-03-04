@@ -52,7 +52,7 @@ func (h *Hash) UnmarshalBSONValue(t bsontype.Type, b []byte) error {
 // ever being blocked.
 type AllowListedSkylink struct {
 	ID             primitive.ObjectID `bson:"_id,omitempty"`
-	Skylink        string             `bson:"skylink"`
+	Hash           Hash               `bson:"hash"`
 	Description    string             `bson:"description"`
 	TimestampAdded time.Time          `bson:"timestamp_added"`
 }
