@@ -193,6 +193,6 @@ func (s *Syncer) managedSyncPortals() error {
 // managedUpdateLastSyncedHash updates the last synced hash for the given portal
 func (s *Syncer) managedUpdateLastSyncedHash(portalURL string, hash string) {
 	s.staticMu.Lock()
-	s.staticMu.Unlock()
+	defer s.staticMu.Unlock()
 	s.lastSyncedHash[portalURL] = hash
 }
