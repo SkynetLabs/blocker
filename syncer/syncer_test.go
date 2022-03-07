@@ -38,7 +38,7 @@ func testLastSyncedHash(t *testing.T) {
 	t.Parallel()
 
 	// create a test syncer
-	s, err := newTestSyncer("testLastSyncedHash", nil)
+	s, err := newTestSyncer(t.Name(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,17 +90,20 @@ func testSyncer(t *testing.T) {
 	defer server.Close()
 
 	// create a test syncer that syncs from our server
-	s, err := newTestSyncer("testSyncer", []string{server.URL})
+	s, err := newTestSyncer(t.Name(), []string{server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// insert one hash manually, this will assert that our insert ignores
 	// duplicate entries
-	s.staticDB.CreateBlockedSkylink(context.Background(), &database.BlockedSkylink{
+	err = s.staticDB.CreateBlockedSkylink(context.Background(), &database.BlockedSkylink{
 		Hash:           database.Hash{hash1},
 		TimestampAdded: time.Now().UTC(),
 	})
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// assert the database contains our one entry
 	hashes, _, err := s.staticDB.BlockedHashes(1, 0, 1)
@@ -198,6 +201,9 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 // randomHash returns a random hash
 func randomHash() crypto.Hash {
 	var h crypto.Hash
-	rand.Read(h[:])
+	_, err := rand.Read(h[:])
+	if err != nil {
+		panic(err)
+	}
 	return h
 }

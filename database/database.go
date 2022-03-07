@@ -172,7 +172,7 @@ func (db *DB) Close() error {
 }
 
 // CreateBlockedSkylink creates a new skylink. If the skylink already exists it
-// does nothing.
+// returns ErrSkylinkExists.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
 	// Ensure the given object has all required properties set
 	err := skylink.Validate()

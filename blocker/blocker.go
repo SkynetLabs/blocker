@@ -211,7 +211,7 @@ func (bl *Blocker) managedBlock() error {
 		return nil
 	}
 
-	bl.staticLogger.Tracef("SweepAndBlock will block all these: %+v", hashes)
+	bl.staticLogger.Tracef("managedBlock will block all these: %+v", hashes)
 
 	// Block the hashes
 	blocked, invalid, err := bl.BlockHashes(hashes)
@@ -220,7 +220,7 @@ func (bl *Blocker) managedBlock() error {
 		return err
 	}
 
-	bl.staticLogger.Tracef("SweepAndBlock blocked %v hashes, %v invalid hashes", blocked, invalid)
+	bl.staticLogger.Tracef("managedBlock blocked %v hashes, %v invalid hashes", blocked, invalid)
 
 	// Update the latest block time to the time immediately prior to fetching
 	// the hashes from the database.
@@ -235,7 +235,7 @@ func (bl *Blocker) managedLatestBlockTime() time.Time {
 	return bl.latestBlockTime
 }
 
-// managedRetryHashess fetches all blocked skylinks that failed to get blocked
+// managedRetryHashes fetches all blocked skylinks that failed to get blocked
 // the first time and retries them.
 func (bl *Blocker) managedRetryHashes() error {
 	// Fetch hashes to retry
@@ -249,7 +249,7 @@ func (bl *Blocker) managedRetryHashes() error {
 		return nil
 	}
 
-	bl.staticLogger.Tracef("RetryFailedSkylinks will retry all these: %+v", hashes)
+	bl.staticLogger.Tracef("managedRetryHashes will retry all these: %+v", hashes)
 
 	// Retry the hashes
 	blocked, _, err := bl.BlockHashes(hashes)
@@ -258,7 +258,7 @@ func (bl *Blocker) managedRetryHashes() error {
 		return err
 	}
 
-	bl.staticLogger.Tracef("RetryFailedSkylinks blocked %v hashes", blocked)
+	bl.staticLogger.Tracef("managedRetryHashes blocked %v hashes", blocked)
 
 	// NOTE: we purposefully do not update the latest block timestamp in the
 	// retry loop
