@@ -13,6 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -53,6 +54,14 @@ func TestDatabase(t *testing.T) {
 		{
 			name: "CreateBlockedSkylink",
 			test: testCreateBlockedSkylink,
+		},
+		{
+			name: "CreateBlockedSkylink",
+			test: testCreateBlockedSkylinkBulk,
+		},
+		{
+			name: "IgnoreDuplicateKeyErrors",
+			test: testIgnoreDuplicateKeyErrors,
 		},
 		{
 			name: "IsAllowListedSkylink",
@@ -179,6 +188,88 @@ func testCreateBlockedSkylink(t *testing.T) {
 		fmt.Println(string(b1))
 		fmt.Println(string(b2))
 		t.Fatal("not equal")
+	}
+}
+
+// testCreateBlockedSkylink tests creating blocked skylinks in bulk
+func testCreateBlockedSkylinkBulk(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// create three blocked skylinks in bulk, make sure it contains a duplicate
+	added, err := db.CreateBlockedSkylinkBulk(ctx, []BlockedSkylink{
+		{
+			Hash:           HashBytes([]byte("somehash1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+		{
+			Hash:           HashBytes([]byte("somehash2")),
+			TimestampAdded: time.Now().UTC(),
+		},
+		{
+			Hash:           HashBytes([]byte("somehash1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+	})
+
+	// assert there's no error and two got added
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 2 {
+		t.Fatalf("unexpected amount of skylinks blocked, %v != 2", added)
+	}
+}
+
+// testIgnoreDuplicateKeyErrors is a unit test that verifies the functionality
+// of ignoreDuplicateKeyErrors
+func testIgnoreDuplicateKeyErrors(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// insert two documents with the same hash (triggers duplicate key error)
+	docs := []interface{}{
+		BlockedSkylink{
+			Hash:           HashBytes([]byte("skylink_1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+		BlockedSkylink{
+			Hash:           HashBytes([]byte("skylink_1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+	}
+	_, err := db.staticSkylinks.InsertMany(ctx, docs)
+	if err == nil {
+		t.Fatal("unexpected nil error")
+	}
+
+	// assert the error got ignored because all write errors were duplicates
+	if ignoreDuplicateKeyErrors(err) != nil {
+		t.Fatal("unexpected error, should have ignored all duplicate key errs")
+	}
+
+	// cast the error to a bulk write exception and append an empty write error
+	bwe, ok := err.(mongo.BulkWriteException)
+	if !ok {
+		t.Fatal("failed to cast error")
+	}
+	var custom mongo.BulkWriteError
+	bwe.WriteErrors = append(bwe.WriteErrors, custom)
+
+	// assert the error is not ignored, because it contained an unknown error
+	err3 := ignoreDuplicateKeyErrors(bwe)
+	if err3 == nil {
+		t.Fatal("unexpected nil error, shouldn't have ignored the custom error we added")
 	}
 }
 

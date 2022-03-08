@@ -160,6 +160,7 @@ func (s *Syncer) managedSyncPortals() error {
 			for _, entry := range blg.Entries {
 				hash := database.Hash{entry.Hash}
 				if lastSynced != "" && hash.String() == lastSynced {
+					seen = true
 					break
 				}
 

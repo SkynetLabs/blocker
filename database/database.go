@@ -222,18 +222,10 @@ func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSk
 	res, err := db.staticSkylinks.InsertMany(ctx, docs, opts)
 
 	// Handle the error, we want to ignore all duplicate key errors
+	err = ignoreDuplicateKeyErrors(err)
 	if err != nil {
-		bWriteErr, ok := err.(mongo.BulkWriteException)
-		if !ok {
-			logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", err)
-			return 0, err
-		}
-		for _, bWriteError := range bWriteErr.WriteErrors {
-			if !isDuplicateKey(bWriteError) {
-				logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", bWriteError)
-				return 0, err
-			}
-		}
+		logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", err)
+		return 0, err
 	}
 
 	return len(res.InsertedIDs), nil
@@ -447,6 +439,33 @@ func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
 	collSkylinks := db.staticDB.Collection(collSkylinks)
 	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
 	return err
+}
+
+// ignoreDuplicateKeyErrors takes an error, if that error is a mongo
+// BulkWriteException, it will loop through the write errors and ignore
+// duplicate key errors. If all write errors were duplicate key errors, this
+// function returns nil, otherwise it simply returns the given error.
+func ignoreDuplicateKeyErrors(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// check whether the given error is a BulkWriteException, if it's not simply
+	// return the error
+	bWriteErr, ok := err.(mongo.BulkWriteException)
+	if !ok {
+		return err
+	}
+
+	// loop over all write errors, ignore the duplicate key errors, if all write
+	// errors are duplicate key errors we want to ignore the bulk write error
+	// all together
+	for _, bWriteError := range bWriteErr.WriteErrors {
+		if !isDuplicateKey(bWriteError) {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureDBSchema checks that we have all collections and indexes we need and

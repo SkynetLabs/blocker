@@ -6,6 +6,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -176,6 +177,7 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	logger.Out = ioutil.Discard
 
 	// create database
+	dbName = strings.Replace(dbName, "/", "_", -1)
 	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
 		Username: "admin",
 		Password: "aO4tV5tC1oU3oQ7u",
