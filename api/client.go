@@ -32,7 +32,7 @@ func (c *Client) BlocklistGET(offset int) (*BlocklistGET, error) {
 
 	// execute the get request
 	var blg BlocklistGET
-	err := c.get("/portal/blocklist", query, &blg)
+	err := c.get("/skynet/portal/blocklist", query, &blg)
 	if err != nil {
 		return nil, errors.AddContext(err, fmt.Sprintf("failed to fetch blocklist for portal %s", c.staticPortalURL))
 	}

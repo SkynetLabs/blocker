@@ -84,7 +84,7 @@ func testSyncer(t *testing.T) {
 
 	// create a small server that returns our response
 	mux := http.NewServeMux()
-	mux.HandleFunc("/portal/blocklist", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/skynet/portal/blocklist", func(w http.ResponseWriter, r *http.Request) {
 		skyapi.WriteJSON(w, blg)
 	})
 	server := httptest.NewServer(mux)
