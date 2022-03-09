@@ -61,7 +61,7 @@ func (c *Client) get(endpoint string, query url.Values, obj interface{}) error {
 
 	// return an error if the status code is not in the 200s
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("GET request to '%s' with status %d error %v", endpoint, res.StatusCode, readAPIError(res.Body))
+		return fmt.Errorf("GET request to '%s' with status %d error %v", url, res.StatusCode, readAPIError(res.Body))
 	}
 
 	// handle the response body

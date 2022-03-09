@@ -173,6 +173,12 @@ func (s *Syncer) managedSyncPortals() error {
 			}
 		}
 
+		// continue if no hashes were found
+		if len(hashes) == 0 {
+			logger.Infof("could not find any hashes for portal '%s'", portalURL)
+			continue
+		}
+
 		// bulk insert all of the hashes into the database
 		added, err := s.staticDB.CreateBlockedSkylinkBulk(s.staticCtx, hashes)
 		if err != nil {
