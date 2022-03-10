@@ -13,6 +13,7 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
@@ -55,16 +56,28 @@ func TestDatabase(t *testing.T) {
 			test: testCreateBlockedSkylink,
 		},
 		{
+			name: "CreateBlockedSkylink",
+			test: testCreateBlockedSkylinkBulk,
+		},
+		{
+			name: "IgnoreDuplicateKeyErrors",
+			test: testIgnoreDuplicateKeyErrors,
+		},
+		{
 			name: "IsAllowListedSkylink",
 			test: testIsAllowListedSkylink,
 		},
 		{
-			name: "MarkAsSucceeded",
-			test: testMarkAsSucceeded,
+			name: "MarkSucceeded",
+			test: testMarkSucceeded,
 		},
 		{
-			name: "MarkAsFailed",
-			test: testMarkAsFailed,
+			name: "MarkFailed",
+			test: testMarkFailed,
+		},
+		{
+			name: "MarkInvalid",
+			test: testMarkInvalid,
 		},
 	}
 	for _, test := range tests {
@@ -108,11 +121,18 @@ func testCreateBlockedSkylink(t *testing.T) {
 
 	// verify we assert 'Hash' is set
 	err := db.CreateBlockedSkylink(ctx, &BlockedSkylink{})
-	if err == nil || !strings.Contains(err.Error(), "'hash' is not set") {
-		t.Fatal("expected 'hash is not set' error", err)
+	if err == nil || !strings.Contains(err.Error(), "missing 'Hash' property") {
+		t.Fatal("expected 'missing 'Hash' property' error", err)
 	}
 	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash: HashBytes([]byte("somehash")),
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing 'TimestampAdded' property") {
+		t.Fatal("expected 'missing 'TimestampAdded' property' error", err)
+	}
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Hash:           HashBytes([]byte("somehash")),
+		TimestampAdded: time.Now().UTC(),
 	})
 	if err != nil {
 		t.Fatal("unexpected error", err)
@@ -171,6 +191,88 @@ func testCreateBlockedSkylink(t *testing.T) {
 	}
 }
 
+// testCreateBlockedSkylink tests creating blocked skylinks in bulk
+func testCreateBlockedSkylinkBulk(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// create three blocked skylinks in bulk, make sure it contains a duplicate
+	added, err := db.CreateBlockedSkylinkBulk(ctx, []BlockedSkylink{
+		{
+			Hash:           HashBytes([]byte("somehash1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+		{
+			Hash:           HashBytes([]byte("somehash2")),
+			TimestampAdded: time.Now().UTC(),
+		},
+		{
+			Hash:           HashBytes([]byte("somehash1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+	})
+
+	// assert there's no error and two got added
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 2 {
+		t.Fatalf("unexpected amount of skylinks blocked, %v != 2", added)
+	}
+}
+
+// testIgnoreDuplicateKeyErrors is a unit test that verifies the functionality
+// of ignoreDuplicateKeyErrors
+func testIgnoreDuplicateKeyErrors(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// insert two documents with the same hash (triggers duplicate key error)
+	docs := []interface{}{
+		BlockedSkylink{
+			Hash:           HashBytes([]byte("skylink_1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+		BlockedSkylink{
+			Hash:           HashBytes([]byte("skylink_1")),
+			TimestampAdded: time.Now().UTC(),
+		},
+	}
+	_, err := db.staticSkylinks.InsertMany(ctx, docs)
+	if err == nil {
+		t.Fatal("unexpected nil error")
+	}
+
+	// assert the error got ignored because all write errors were duplicates
+	if ignoreDuplicateKeyErrors(err) != nil {
+		t.Fatal("unexpected error, should have ignored all duplicate key errs")
+	}
+
+	// cast the error to a bulk write exception and append an empty write error
+	bwe, ok := err.(mongo.BulkWriteException)
+	if !ok {
+		t.Fatal("failed to cast error")
+	}
+	var custom mongo.BulkWriteError
+	bwe.WriteErrors = append(bwe.WriteErrors, custom)
+
+	// assert the error is not ignored, because it contained an unknown error
+	err3 := ignoreDuplicateKeyErrors(bwe)
+	if err3 == nil {
+		t.Fatal("unexpected nil error, shouldn't have ignored the custom error we added")
+	}
+}
+
 // testIsAllowListedSkylink tests the 'IsAllowListed' method on the database.
 func testIsAllowListedSkylink(t *testing.T) {
 	// create context
@@ -212,9 +314,9 @@ func testIsAllowListedSkylink(t *testing.T) {
 	}
 }
 
-// testMarkAsSucceeded is a unit test that covers the functionality of
-// the 'MarkAsSucceeded' method on the database.
-func testMarkAsSucceeded(t *testing.T) {
+// testMarkSucceeded is a unit test that covers the functionality of
+// the 'MarkSucceeded' method on the database.
+func testMarkSucceeded(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
@@ -223,9 +325,9 @@ func testMarkAsSucceeded(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// ensure 'MarkAsSucceeded' can handle an empty slice
+	// ensure 'MarkSucceeded' can handle an empty slice
 	var empty []Hash
-	err := db.MarkAsSucceeded(empty)
+	err := db.MarkSucceeded(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,7 +357,7 @@ func testMarkAsSucceeded(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 1", len(toRetry))
 	}
 
-	err = db.MarkAsSucceeded(toRetry)
+	err = db.MarkSucceeded(toRetry)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,9 +371,9 @@ func testMarkAsSucceeded(t *testing.T) {
 	}
 }
 
-// testMarkAsFailed is a unit test that covers the functionality of
-// the 'MarkAsFailed' method on the database.
-func testMarkAsFailed(t *testing.T) {
+// testMarkFailed is a unit test that covers the functionality of the
+// 'MarkFailed' method on the database.
+func testMarkFailed(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
@@ -280,14 +382,14 @@ func testMarkAsFailed(t *testing.T) {
 	db := newTestDB(ctx, t.Name())
 	defer db.Close()
 
-	// ensure 'MarkAsFailed' can handle an empty slice
+	// ensure 'MarkFailed' can handle an empty slice
 	var empty []Hash
-	err := db.MarkAsFailed(empty)
+	err := db.MarkFailed(empty)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// insert two regular documents
+	// insert two regular documents and one invalid one
 	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Skylink:        "skylink_1",
 		Hash:           HashBytes([]byte("skylink_1")),
@@ -301,6 +403,14 @@ func testMarkAsFailed(t *testing.T) {
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
+	})
+	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Skylink:        "skylink_3",
+		Hash:           HashBytes([]byte("skylink_3")),
+		Reporter:       Reporter{},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+		Invalid:        true,
 	})
 
 	// fetch a cursor that holds all docs
@@ -330,7 +440,7 @@ func testMarkAsFailed(t *testing.T) {
 	for i, doc := range all {
 		hashes[i] = doc.Hash
 	}
-	err = db.MarkAsFailed(hashes)
+	err = db.MarkFailed(hashes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,7 +454,84 @@ func testMarkAsFailed(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 2", len(toRetry))
 	}
 
+	// the above tests asserted that both 'HashesToRetry' and 'MarkFailed' both
+	// handle invalid documents properly
+
 	// no need to mark them as succeeded, the other unit test covers that
+}
+
+// testMarkInvalid is a unit test that covers the functionality of the
+// 'MarkInvalid' method on the database.
+func testMarkInvalid(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(ctx, t.Name())
+	defer db.Close()
+
+	// ensure 'MarkInvalid' can handle an empty slice
+	var empty []Hash
+	err := db.MarkInvalid(empty)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// insert a regular document
+	hash := HashBytes([]byte("skylink_1"))
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Skylink:        "skylink_1",
+		Hash:           hash,
+		Reporter:       Reporter{},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert there's one hash that needs to be blocked
+	toBlock, err := db.HashesToBlock(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 1 {
+		t.Fatalf("expected 1 hash, instead it was %v", len(toBlock))
+	}
+
+	// assert the document is not marked as invalid
+	bsl, err := db.FindByHash(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bsl.Invalid {
+		t.Fatal("expected invalid to be false")
+	}
+
+	// mark it as invalid
+	err = db.MarkInvalid([]Hash{hash})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert the document is marked as invalid
+	bsl, err = db.FindByHash(ctx, hash)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bsl.Invalid {
+		t.Fatal("expected invalid to be true")
+	}
+
+	// assert 'HashesToBlock' excludes invalid documents
+	toBlock, err = db.HashesToBlock(time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 0 {
+		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
+	}
 }
 
 // define a helper function to decode a skylink as string into a skylink obj

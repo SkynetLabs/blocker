@@ -28,8 +28,10 @@ type mockSkyd struct{}
 // the following methods are the implementation of the interface, it's
 // essentially all no-ops except for the resolver which resolves a predefined v2
 // skylink to its v1.
-func (api *mockSkyd) BlockHashes(hashes []string) error { return nil }
-func (api *mockSkyd) IsSkydUp() bool                    { return true }
+func (api *mockSkyd) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
+	return nil, nil, nil
+}
+func (api *mockSkyd) IsSkydUp() bool { return true }
 func (api *mockSkyd) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
 	if skylink.IsSkylinkV2() && skylink.String() == v2SkylinkStr {
 		var v1 skymodules.Skylink

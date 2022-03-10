@@ -9,7 +9,6 @@ import (
 	"github.com/SkynetLabs/blocker/database"
 	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
-	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
@@ -18,20 +17,23 @@ import (
 // essentially a no-op except for 'BlockHashes' which keeps track of the
 // arguments with which it is called
 type mockSkyd struct {
-	BlockHashesReqs [][]string
+	blockHashesReqs [][]database.Hash
 }
 
 // BlockHashes adds the given hashes to the block list.
-func (api *mockSkyd) BlockHashes(hashes []string) error {
-	api.BlockHashesReqs = append(api.BlockHashesReqs, hashes)
+func (api *mockSkyd) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
+	api.blockHashesReqs = append(api.blockHashesReqs, hashes)
 
-	// check whether the caller expects an error to be thrown
+	// filter out "invalid" hashes
+	var invalids []database.Hash
 	for _, h := range hashes {
-		if h == database.HashBytes([]byte("throwerror")).String() {
-			return errors.New(unableToUpdateBlocklistErrStr)
+		if h.String() == database.HashBytes([]byte("invalid_hash")).String() {
+			invalids = append(invalids, h)
 		}
 	}
-	return nil
+
+	// return the valid hashes, invalid hashes and no error
+	return database.DiffHashes(hashes, invalids), invalids, nil
 }
 
 // IsSkydUp returns true if the skyd API instance is up.
@@ -97,38 +99,31 @@ func testBlockHashes(t *testing.T) {
 
 	// the last hash before the failure should be the latest timestamp set,
 	// so save this timestamp as an expected value for later
-	hashes = append(hashes, database.HashBytes([]byte("throwerror")))
+	hashes = append(hashes, database.HashBytes([]byte("invalid_hash")))
 	for ; i < 15; i++ {
 		hash := database.HashBytes([]byte(fmt.Sprintf("skylink_hash_%d", i)))
 		hashes = append(hashes, hash)
 	}
 
-	blocked, failed, err := blocker.blockHashes(hashes)
+	blocked, invalid, err := blocker.BlockHashes(hashes)
 	if err != nil {
 		t.Fatal("unexpected error thrown", err)
 	}
 	// assert blocked and failed are returned correctly
 	if blocked != 15 {
-		t.Fatalf("unexpected return values for blocked, %v != 15", blocked)
+		t.Errorf("unexpected return values for blocked, %v != 15", blocked)
 	}
-	if failed != 1 {
-		t.Fatalf("unexpected return values for failed, %v != 1", failed)
+	if invalid != 1 {
+		t.Fatalf("unexpected return values for invalid, %v != 1", invalid)
 	}
 
-	// assert 18 requests in total happen to skyd, batch size 100, 10 and 1
-	if len(api.BlockHashesReqs) != 18 {
-		t.Fatalf("unexpected amount of calls to Skyd block endpoint, %v != 18", len(api.BlockHashesReqs))
+	// assert only 1 request happened to the block endpoint
+	if len(api.blockHashesReqs) != 1 {
+		t.Fatalf("unexpected amount of block requests, %v != 1", len(api.blockHashesReqs))
 	}
-	if len(api.BlockHashesReqs[0]) != 16 {
-		t.Fatalf("unexpected first batch size, %v != 16", len(api.BlockHashesReqs[0]))
-	}
-	if len(api.BlockHashesReqs[1]) != 10 {
-		t.Fatalf("unexpected second batch size, %v != 10", len(api.BlockHashesReqs[1]))
-	}
-	for r := 2; r < 18; r++ {
-		if len(api.BlockHashesReqs[r]) != 1 {
-			t.Fatalf("unexpected batch size for req %d, %v != 1", r, len(api.BlockHashesReqs[r]))
-		}
+	// assert that request contained all hashes
+	if len(api.blockHashesReqs[0]) != 16 {
+		t.Fatalf("unexpected amount of hashes, %v != 16", len(api.blockHashesReqs[0]))
 	}
 }
 

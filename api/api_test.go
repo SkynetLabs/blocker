@@ -95,21 +95,15 @@ func (at *apiTester) get(endpoint string, query url.Values, obj interface{}) err
 	w := httptest.NewRecorder()
 	at.staticAPI.blocklistGET(w, req, nil)
 	res := w.Result()
-	defer res.Body.Close()
-
-	// handle the response
-	data, err := ioutil.ReadAll(res.Body)
-	if err != nil {
-		return err
-	}
+	defer drainAndClose(res.Body)
 
 	// return an error if the status code is not in the 200s
 	if res.StatusCode < 200 || res.StatusCode >= 300 {
-		return fmt.Errorf("GET request to '%s' with status %d, response body: %v", endpoint, res.StatusCode, string(data))
+		return fmt.Errorf("GET request to '%s' with status %d error %v", endpoint, res.StatusCode, readAPIError(res.Body))
 	}
 
-	// unmarshal the body into the given object
-	err = json.Unmarshal(data, obj)
+	// handle the response body
+	err := json.NewDecoder(res.Body).Decode(obj)
 	if err != nil {
 		return err
 	}
