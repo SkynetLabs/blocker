@@ -1,4 +1,4 @@
-package blocker
+package modules
 
 import (
 	"bytes"

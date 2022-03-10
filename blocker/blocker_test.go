@@ -2,48 +2,38 @@ package blocker
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
-	"gitlab.com/SkynetLabs/skyd/skymodules"
-	"go.mongodb.org/mongo-driver/mongo/options"
+	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
 )
 
-// mockSkyd is a helper struct that implements the skyd API, all methods are
-// essentially a no-op except for 'BlockHashes' which keeps track of the
-// arguments with which it is called
-type mockSkyd struct {
-	blockHashesReqs [][]database.Hash
-}
+// mockBlocklistResponse is a mock handler for the /skynet/blocklist endpoint
+func mockBlocklistResponse(w http.ResponseWriter, r *http.Request) {
+	var request skyapi.SkynetBlocklistPOST
+	err := json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		panic(err)
+	}
 
-// BlockHashes adds the given hashes to the block list.
-func (api *mockSkyd) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
-	api.blockHashesReqs = append(api.blockHashesReqs, hashes)
-
-	// filter out "invalid" hashes
-	var invalids []database.Hash
-	for _, h := range hashes {
-		if h.String() == database.HashBytes([]byte("invalid_hash")).String() {
-			invalids = append(invalids, h)
+	var invalids []api.InvalidInput
+	invalidHashStr := database.HashBytes([]byte("invalid_hash")).String()
+	for _, hash := range request.Add {
+		if hash == invalidHashStr {
+			invalids = append(invalids, api.InvalidInput{Input: hash, Error: "invalid hash"})
 		}
 	}
 
-	// return the valid hashes, invalid hashes and no error
-	return database.DiffHashes(hashes, invalids), invalids, nil
-}
-
-// IsSkydUp returns true if the skyd API instance is up.
-func (api *mockSkyd) IsSkydUp() bool {
-	return true
-}
-
-// ResolveSkylink tries to resolve the given skylink to a V1 skylink.
-func (api *mockSkyd) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
-	return skylink, nil
+	var response api.BlockResponse
+	response.Invalids = invalids
+	skyapi.WriteJSON(w, response)
 }
 
 // TestBlocker runs the blocker unit tests
@@ -53,9 +43,15 @@ func TestBlocker(t *testing.T) {
 	}
 	t.Parallel()
 
+	// create a test server that returns mocked responses used by our subtests
+	mux := http.NewServeMux()
+	mux.HandleFunc("/skynet/blocklist", mockBlocklistResponse)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
 	tests := []struct {
 		name string
-		test func(t *testing.T)
+		test func(t *testing.T, s *httptest.Server)
 	}{
 		{
 			name: "BlockHashes",
@@ -63,17 +59,19 @@ func TestBlocker(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		t.Run(test.name, test.test)
+		t.Run(test.name, func(t *testing.T) {
+			test.test(t, server)
+		})
 	}
 }
 
 // testBlockHashes is a unit test that covers the 'blockHashes' method.
-func testBlockHashes(t *testing.T) {
-	// create a mock skyd api
-	api := &mockSkyd{}
+func testBlockHashes(t *testing.T, server *httptest.Server) {
+	// create a client that connects to our server
+	client := api.NewClient(server.URL)
 
 	// create the blocker
-	blocker, err := newTestBlocker("BlockHashes", api)
+	blocker, err := newTestBlocker("BlockHashes", client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,34 +114,19 @@ func testBlockHashes(t *testing.T) {
 	if invalid != 1 {
 		t.Fatalf("unexpected return values for invalid, %v != 1", invalid)
 	}
-
-	// assert only 1 request happened to the block endpoint
-	if len(api.blockHashesReqs) != 1 {
-		t.Fatalf("unexpected amount of block requests, %v != 1", len(api.blockHashesReqs))
-	}
-	// assert that request contained all hashes
-	if len(api.blockHashesReqs[0]) != 16 {
-		t.Fatalf("unexpected amount of hashes, %v != 16", len(api.blockHashesReqs[0]))
-	}
 }
 
 // newTestBlocker returns a new blocker instance
-func newTestBlocker(dbName string, api skyd.API) (*Blocker, error) {
+func newTestBlocker(dbName string, skydClient *api.Client) (*Blocker, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
 	// create database
-	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
-		Username: "admin",
-		Password: "aO4tV5tC1oU3oQ7u",
-	}, logger)
-	if err != nil {
-		return nil, err
-	}
+	db := database.NewTestDB(context.Background(), dbName, logger)
 
 	// create the blocker
-	blocker, err := New(context.Background(), api, db, logger)
+	blocker, err := New(context.Background(), skydClient, db, logger)
 	if err != nil {
 		return nil, err
 	}

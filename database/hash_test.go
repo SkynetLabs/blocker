@@ -26,7 +26,7 @@ func TestHashMarhsaling(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// create test collection and purge it

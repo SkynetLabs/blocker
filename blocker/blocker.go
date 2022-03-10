@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/SkynetLabs/skynet-accounts/build"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
@@ -52,16 +52,16 @@ type (
 		// to block.
 		latestBlockTime time.Time
 
-		staticCtx     context.Context
-		staticDB      *database.DB
-		staticLogger  *logrus.Logger
-		staticMu      sync.Mutex
-		staticSkydAPI skyd.API
+		staticCtx        context.Context
+		staticDB         *database.DB
+		staticLogger     *logrus.Logger
+		staticMu         sync.Mutex
+		staticSkydClient *api.Client
 	}
 )
 
 // New returns a new Blocker with the given parameters.
-func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
+func New(ctx context.Context, skydClient *api.Client, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
 	if ctx == nil {
 		return nil, errors.New("no context provided")
 	}
@@ -71,14 +71,15 @@ func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.
 	if logger == nil {
 		return nil, errors.New("no logger provided")
 	}
-	if skydAPI == nil {
-		return nil, errors.New("no Skyd API provided")
+	if skydClient == nil {
+		return nil, errors.New("no Skyd client provided")
 	}
+	// TODO: check skyd and nginx client
 	bl := &Blocker{
-		staticCtx:     ctx,
-		staticDB:      db,
-		staticLogger:  logger,
-		staticSkydAPI: skydAPI,
+		staticCtx:        ctx,
+		staticDB:         db,
+		staticLogger:     logger,
+		staticSkydClient: skydClient,
 	}
 	return bl, nil
 }
@@ -112,7 +113,7 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 
 		// send the batch to skyd, if an error occurs we mark it as failed and
 		// escape early because something is probably wrong
-		blocked, invalid, err := bl.staticSkydAPI.BlockHashes(batch)
+		blocked, invalid, err := bl.staticSkydClient.BlockHashes(batch)
 		if err != nil {
 			err = errors.Compose(err, bl.staticDB.MarkFailed(batch))
 			return numBlocked, numInvalid, err

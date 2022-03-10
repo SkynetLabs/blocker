@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"strings"
 	"time"
 
@@ -22,6 +23,15 @@ const (
 
 	// mongoIndexCreateTimeout is the timeout used when creating indices
 	mongoIndexCreateTimeout = 10 * time.Second
+
+	// mongoTestUsername is the username used for the test database.
+	mongoTestUsername = "admin"
+
+	// mongoTestPassword is the password used for the test database.
+	mongoTestPassword = "aO4tV5tC1oU3oQ7u"
+
+	// mongoTestConnString is the connection string used for the test database.
+	mongoTestConnString = "mongodb://localhost:37017"
 )
 
 var (
@@ -137,6 +147,37 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	}
 
 	return cdb, nil
+}
+
+// NewTestDB returns a test database, the database gets purged and on error we
+// panic.
+func NewTestDB(ctx context.Context, dbName string, logger *logrus.Logger) *DB {
+	// create a discard logger if the caller did not pass one
+	if logger == nil {
+		logger = logrus.New()
+		logger.Out = ioutil.Discard
+	}
+
+	// create the database, we swap out slashes for underscores so callers can
+	// easily pass t.Name()
+	dbName = strings.Replace(dbName, "/", "_", -1)
+	db, err := NewCustomDB(ctx, mongoTestConnString, dbName, options.Credential{
+		Username: mongoTestUsername,
+		Password: mongoTestPassword,
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+
+	// create a context with timeout and purge the database
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+	err = db.Purge(ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	return db
 }
 
 // BlockedHashes allows to pass a skip and limit parameter and returns an array

@@ -4,37 +4,15 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"reflect"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/sirupsen/logrus"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
-
-// newTestDB creates a new database for a given test's name.
-func newTestDB(ctx context.Context, dbName string) *DB {
-	dbName = strings.ReplaceAll(dbName, "/", "-")
-	logger := logrus.New()
-	logger.Out = ioutil.Discard
-	db, err := NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
-		Username: "admin",
-		Password: "aO4tV5tC1oU3oQ7u",
-	}, logger)
-	if err != nil {
-		panic(err)
-	}
-	err = db.Purge(ctx)
-	if err != nil {
-		panic(err)
-	}
-	return db
-}
 
 // TestDatabase runs the database unit tests.
 func TestDatabase(t *testing.T) {
@@ -92,7 +70,7 @@ func testPing(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 	err := db.Ping(ctx)
 	if err != nil {
@@ -116,7 +94,7 @@ func testCreateBlockedSkylink(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// verify we assert 'Hash' is set
@@ -198,7 +176,7 @@ func testCreateBlockedSkylinkBulk(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// create three blocked skylinks in bulk, make sure it contains a duplicate
@@ -234,7 +212,7 @@ func testIgnoreDuplicateKeyErrors(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// insert two documents with the same hash (triggers duplicate key error)
@@ -280,7 +258,7 @@ func testIsAllowListedSkylink(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// Add a skylink in the allow list
@@ -322,7 +300,7 @@ func testMarkSucceeded(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// ensure 'MarkSucceeded' can handle an empty slice
@@ -379,7 +357,7 @@ func testMarkFailed(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// ensure 'MarkFailed' can handle an empty slice
@@ -468,7 +446,7 @@ func testMarkInvalid(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
+	db := NewTestDB(ctx, t.Name(), nil)
 	defer db.Close()
 
 	// ensure 'MarkInvalid' can handle an empty slice

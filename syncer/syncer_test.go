@@ -6,7 +6,6 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +14,6 @@ import (
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.sia.tech/siad/build"
 	"go.sia.tech/siad/crypto"
 )
@@ -177,24 +175,7 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	logger.Out = ioutil.Discard
 
 	// create database
-	dbName = strings.Replace(dbName, "/", "_", -1)
-	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
-		Username: "admin",
-		Password: "aO4tV5tC1oU3oQ7u",
-	}, logger)
-	if err != nil {
-		return nil, err
-	}
-
-	// Define a new context with a timeout to handle the database setup.
-	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
-	defer cancel()
-
-	// purge it
-	err = db.Purge(ctx)
-	if err != nil {
-		return nil, err
-	}
+	db := database.NewTestDB(context.Background(), dbName, logger)
 
 	// create a syncer
 	return New(context.Background(), db, portalURLs, logger)
