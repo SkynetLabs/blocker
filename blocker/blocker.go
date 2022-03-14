@@ -52,11 +52,12 @@ type (
 		// to block.
 		latestBlockTime time.Time
 
-		staticCtx     context.Context
-		staticDB      *database.DB
-		staticLogger  *logrus.Logger
-		staticMu      sync.Mutex
-		staticSkydAPI skyd.API
+		staticCtx       context.Context
+		staticDB        *database.DB
+		staticLogger    *logrus.Logger
+		staticMu        sync.Mutex
+		staticSkydAPI   skyd.API
+		staticWaitGroup sync.WaitGroup
 	}
 )
 
@@ -149,10 +150,38 @@ func (bl *Blocker) Start() error {
 	bl.started = true
 
 	// start the loops
-	go bl.threadedBlockLoop()
-	go bl.threadedRetryLoop()
+	bl.staticWaitGroup.Add(1)
+	go func() {
+		bl.threadedBlockLoop()
+		bl.staticWaitGroup.Done()
+	}()
+
+	bl.staticWaitGroup.Add(1)
+	go func() {
+		bl.threadedRetryLoop()
+		bl.staticWaitGroup.Done()
+	}()
 
 	return nil
+}
+
+// Stop waits for the blocker's waitgroup and times out after one minute.
+func (bl *Blocker) Stop() error {
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		bl.staticWaitGroup.Wait()
+	}()
+
+	select {
+	case <-c:
+		bl.staticMu.Lock()
+		defer bl.staticMu.Unlock()
+		bl.started = false
+		return nil
+	case <-time.After(time.Minute):
+		return errors.New("unclean blocker shutdown")
+	}
 }
 
 // threadedBlockLoop holds the main block loop

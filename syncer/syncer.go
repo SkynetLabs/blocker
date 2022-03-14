@@ -42,6 +42,7 @@ type (
 		staticLogger     *logrus.Logger
 		staticMu         sync.Mutex
 		staticPortalURLs []string
+		staticWaitGroup  sync.WaitGroup
 	}
 )
 
@@ -89,9 +90,32 @@ func (s *Syncer) Start() error {
 	s.started = true
 
 	// start the sync loop
-	go s.threadedSyncLoop()
+	s.staticWaitGroup.Add(1)
+	go func() {
+		s.threadedSyncLoop()
+		s.staticWaitGroup.Done()
+	}()
 
 	return nil
+}
+
+// Stop waits for the syncer's waitgroup and times out after one minute.
+func (s *Syncer) Stop() error {
+	c := make(chan struct{})
+	go func() {
+		defer close(c)
+		s.staticWaitGroup.Wait()
+	}()
+
+	select {
+	case <-c:
+		s.staticMu.Lock()
+		defer s.staticMu.Unlock()
+		s.started = false
+		return nil
+	case <-time.After(time.Minute):
+		return errors.New("unclean syncer shutdown")
+	}
 }
 
 // threadedSyncLoop holds the main sync loop

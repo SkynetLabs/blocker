@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
@@ -42,10 +44,10 @@ func main() {
 	// Existing variables take precedence and won't be overwritten.
 	_ = godotenv.Load()
 
-	// Initialise the global context and logger. These will be used throughout
-	// the service. Once the context is closed, all background threads will
-	// wind themselves down.
-	ctx := context.Background()
+	// Create a global context
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Create a logger
 	logger := logrus.New()
 	logLevel, err := logrus.ParseLevel(os.Getenv("BLOCKER_LOG_LEVEL"))
 	if err != nil {
@@ -141,8 +143,31 @@ func main() {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}
 
-	// TODO: Missing clean shutdown and database disconnect.
-	log.Fatal(server.ListenAndServe(4000))
+	// Start the server
+	go func() {
+		err := server.ListenAndServe(4000)
+		if err != nil {
+			log.Fatal(errors.AddContext(err, "failed to start server"))
+		}
+	}()
+
+	// Catch exit signals
+	exitSignal := make(chan os.Signal, 1)
+	signal.Notify(exitSignal, syscall.SIGINT, syscall.SIGTERM)
+	<-exitSignal
+
+	// On exit call cancel and stop all components
+	cancel()
+	err = errors.Compose(
+		bl.Stop(),
+		sync.Stop(),
+		db.Close(),
+	)
+	if err != nil {
+		log.Fatal("Failed to cleanly close all components, err: ", err)
+	}
+
+	logger.Info("Blocker Terminated.")
 }
 
 // loadDBCredentials creates a new db connection based on credentials found in
