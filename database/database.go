@@ -66,7 +66,6 @@ var (
 //
 // NOTE: update the 'Purge' method when adding new collections
 type DB struct {
-	ctx             context.Context
 	staticClient    *mongo.Client
 	staticDB        *mongo.Database
 	staticAllowList *mongo.Collection
@@ -89,10 +88,6 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 		return nil, errors.New("no logger provided")
 	}
 
-	// Define a new context with a timeout to handle the database setup.
-	dbCtx, cancel := context.WithTimeout(ctx, MongoDefaultTimeout)
-	defer cancel()
-
 	// Prepare the options for connecting to the db.
 	opts := options.Client().
 		ApplyURI(uri).
@@ -108,14 +103,14 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to create a new db client")
 	}
-	err = c.Connect(dbCtx)
+	err = c.Connect(ctx)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to connect to db")
 	}
 
 	// Ensure the database schema
 	db := c.Database(dbName)
-	err = ensureDBSchema(dbCtx, db, logger)
+	err = ensureDBSchema(ctx, db, logger)
 	if err != nil && errors.Contains(err, ErrIndexCreateFailed) {
 		// We do not error out if we failed to ensure the existence of an index.
 		// It is definitely an issue that should be looked into, which is why we
@@ -128,7 +123,6 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 
 	// Define the database
 	cdb := &DB{
-		ctx:             ctx,
 		staticClient:    c,
 		staticDB:        db,
 		staticAllowList: db.Collection(collAllowlist),
@@ -142,7 +136,7 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 // BlockedHashes allows to pass a skip and limit parameter and returns an array
 // of blocked hashes alongside a boolean that indicates whether there's more
 // documents after the current 'page'.
-func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, error) {
+func (db *DB) BlockedHashes(ctx context.Context, sort, skip, limit int) ([]BlockedSkylink, bool, error) {
 	// configure the options
 	opts := options.Find()
 	opts.SetSkip(int64(skip))
@@ -150,7 +144,7 @@ func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, erro
 	opts.SetSort(bson.D{{"timestamp_added", sort}})
 
 	// fetch the documents
-	docs, err := db.find(db.ctx, bson.M{"invalid": bson.M{"$ne": true}}, opts)
+	docs, err := db.find(ctx, bson.M{"invalid": bson.M{"$ne": true}}, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -165,9 +159,7 @@ func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, erro
 }
 
 // Close disconnects the db.
-func (db *DB) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+func (db *DB) Close(ctx context.Context) error {
 	return db.staticClient.Disconnect(ctx)
 }
 
@@ -234,7 +226,7 @@ func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSk
 // CreateAllowListedSkylink creates a new allowlisted skylink. If the skylink
 // already exists it does nothing and returns without failure.
 func (db *DB) CreateAllowListedSkylink(ctx context.Context, skylink *AllowListedSkylink) error {
-	// Insert the skylink
+	// insert the skylink
 	_, err := db.staticAllowList.InsertOne(ctx, skylink)
 	if err != nil && !isDuplicateKey(err) {
 		return err
@@ -261,12 +253,12 @@ func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
 }
 
 // MarkFailed will mark the given documents as failed
-func (db *DB) MarkFailed(hashes []Hash) error {
-	return db.updateFailedFlag(hashes, true)
+func (db *DB) MarkFailed(ctx context.Context, hashes []Hash) error {
+	return db.updateFailedFlag(ctx, hashes, true)
 }
 
 // MarkInvalid will mark the given documents as invalid
-func (db *DB) MarkInvalid(hashes []Hash) error {
+func (db *DB) MarkInvalid(ctx context.Context, hashes []Hash) error {
 	// return early if no hashes were given
 	if len(hashes) == 0 {
 		return nil
@@ -286,14 +278,14 @@ func (db *DB) MarkInvalid(hashes []Hash) error {
 
 	// perform the update
 	collSkylinks := db.staticDB.Collection(collSkylinks)
-	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	_, err := collSkylinks.UpdateMany(ctx, filter, update)
 	return err
 }
 
 // MarkSucceeded will toggle the failed flag for all documents in the given
 // list of hashes that are currently marked as failed.
-func (db *DB) MarkSucceeded(hashes []Hash) error {
-	return db.updateFailedFlag(hashes, false)
+func (db *DB) MarkSucceeded(ctx context.Context, hashes []Hash) error {
+	return db.updateFailedFlag(ctx, hashes, false)
 }
 
 // Ping sends a ping command to verify that the client can connect to the DB and
@@ -320,7 +312,7 @@ func (db *DB) Purge(ctx context.Context) error {
 
 // HashesToBlock sweeps the database for unblocked hashes after the given
 // timestamp.
-func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
+func (db *DB) HashesToBlock(ctx context.Context, from time.Time) ([]Hash, error) {
 	// NOTE: $ne: true is not the same as $eq: false
 	filter := bson.M{
 		"timestamp_added": bson.M{"$gte": from},
@@ -330,7 +322,7 @@ func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
 	opts := options.Find()
 	opts.SetProjection(bson.D{{"hash", 1}})
 
-	docs, err := db.find(db.ctx, filter, opts)
+	docs, err := db.find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -347,7 +339,7 @@ func (db *DB) HashesToBlock(from time.Time) ([]Hash, error) {
 // around. This is a retry mechanism to ensure we keep retrying to block those
 // hashes, but at the same try 'unblock' the main block loop in order for it
 // to run smoothly.
-func (db *DB) HashesToRetry() ([]Hash, error) {
+func (db *DB) HashesToRetry(ctx context.Context) ([]Hash, error) {
 	// NOTE: $ne: true is not the same as $eq: false
 	filter := bson.M{
 		"failed":  bson.M{"$eq": true},
@@ -356,7 +348,7 @@ func (db *DB) HashesToRetry() ([]Hash, error) {
 	opts := options.Find()
 	opts.SetProjection(bson.D{{"hash", 1}})
 
-	docs, err := db.find(db.ctx, filter, opts)
+	docs, err := db.find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -382,7 +374,7 @@ func (db *DB) find(ctx context.Context, filter interface{},
 	}
 
 	list := make([]BlockedSkylink, 0)
-	err = c.All(db.ctx, &list)
+	err = c.All(ctx, &list)
 	if err != nil {
 		return nil, err
 	}
@@ -411,7 +403,7 @@ func (db *DB) findOne(ctx context.Context, filter interface{},
 
 // updateFailedFlag is a helper method that updates the failed flag on the
 // documents that correspond with the skylinks in the given array.
-func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
+func (db *DB) updateFailedFlag(ctx context.Context, hashes []Hash, failed bool) error {
 	// return early if no hashes were given
 	if len(hashes) == 0 {
 		return nil
@@ -437,7 +429,7 @@ func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
 
 	// perform the update
 	collSkylinks := db.staticDB.Collection(collSkylinks)
-	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	_, err := collSkylinks.UpdateMany(ctx, filter, update)
 	return err
 }
 

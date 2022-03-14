@@ -44,9 +44,6 @@ func main() {
 	// Existing variables take precedence and won't be overwritten.
 	_ = godotenv.Load()
 
-	// Create a global context
-	ctx, cancel := context.WithCancel(context.Background())
-
 	// Create a logger
 	logger := logrus.New()
 	logLevel, err := logrus.ParseLevel(os.Getenv("BLOCKER_LOG_LEVEL"))
@@ -61,15 +58,19 @@ func main() {
 		log.Fatal("missing env var SERVER_UID")
 	}
 
-	// Initialised the database connection.
+	// Load the database credentials
 	uri, dbCreds, err := loadDBCredentials()
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to fetch db credentials"))
 	}
+
+	// Create a connection to the database
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
 	db, err := database.New(ctx, uri, dbCreds, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to connect to the db"))
 	}
+	cancel()
 
 	// Blocker env vars.
 	skydPort := defaultSkydPort
@@ -113,7 +114,7 @@ func main() {
 	}
 
 	// Create the blocker.
-	bl, err := blocker.New(ctx, skydAPI, db, logger)
+	bl, err := blocker.New(skydAPI, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
@@ -126,7 +127,7 @@ func main() {
 
 	// Create the syncer.
 	portalURLs := loadPortalURLs()
-	sync, err := syncer.New(ctx, db, portalURLs, logger)
+	sync, err := syncer.New(db, portalURLs, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate syncer"))
 	}
@@ -156,15 +157,21 @@ func main() {
 	signal.Notify(exitSignal, syscall.SIGINT, syscall.SIGTERM)
 	<-exitSignal
 
-	// On exit call cancel and stop all components
-	cancel()
+	// Shut down all components
 	err = errors.Compose(
 		bl.Stop(),
 		sync.Stop(),
-		db.Close(),
 	)
 	if err != nil {
-		log.Fatal("Failed to cleanly close all components, err: ", err)
+		log.Fatal("Failed to cleanly stop all components, err: ", err)
+	}
+
+	// Close the database connection
+	ctx, cancel = context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+	err = db.Close(ctx)
+	if err != nil {
+		log.Fatal("Failed to disconnect from the database, err: ", err)
 	}
 
 	logger.Info("Blocker Terminated.")

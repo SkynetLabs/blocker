@@ -39,7 +39,7 @@ func testLastSyncedHash(t *testing.T) {
 	t.Parallel()
 
 	// create a test syncer
-	s, err := newTestSyncer(context.Background(), t.Name(), nil)
+	s, err := newTestSyncer(t.Name(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,6 +71,10 @@ func testRandomHash(t *testing.T) {
 // testSyncer is an integration test that syncs siasky.net's blocklist with our
 // mock skyd instance
 func testSyncer(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
 	// create a mocked blocklist response returning two hashes
 	hash1 := randomHash()
 	hash2 := randomHash()
@@ -91,8 +95,7 @@ func testSyncer(t *testing.T) {
 	defer server.Close()
 
 	// create a test syncer that syncs from our server
-	ctx, cancel := context.WithCancel(context.Background())
-	s, err := newTestSyncer(ctx, t.Name(), []string{server.URL})
+	s, err := newTestSyncer(t.Name(), []string{server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,7 +111,7 @@ func testSyncer(t *testing.T) {
 	}
 
 	// assert the database contains our one entry
-	hashes, _, err := s.staticDB.BlockedHashes(1, 0, 1)
+	hashes, _, err := s.staticDB.BlockedHashes(ctx, 1, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +127,6 @@ func testSyncer(t *testing.T) {
 
 	// defer a call to stop
 	defer func() {
-		cancel()
 		err := s.Stop()
 		if err != nil {
 			t.Fatal(err)
@@ -133,7 +135,7 @@ func testSyncer(t *testing.T) {
 
 	// check in a loop whether we're filling up the database
 	err = build.Retry(100, 100*time.Millisecond, func() error {
-		hashes, _, err := s.staticDB.BlockedHashes(1, 0, 2)
+		hashes, _, err := s.staticDB.BlockedHashes(ctx, 1, 0, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,7 +149,7 @@ func testSyncer(t *testing.T) {
 	}
 
 	// fetch hashes to block, we expect to see two
-	toBlock, err := s.staticDB.HashesToBlock(time.Time{})
+	toBlock, err := s.staticDB.HashesToBlock(ctx, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,7 +163,7 @@ func testSyncer(t *testing.T) {
 	}
 
 	// fetch the entire database entry
-	bsl, err := s.staticDB.FindByHash(context.Background(), toBlock[1])
+	bsl, err := s.staticDB.FindByHash(ctx, toBlock[1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,10 +183,14 @@ func testSyncer(t *testing.T) {
 }
 
 // newTestSyncer returns a test syncer object.
-func newTestSyncer(ctx context.Context, dbName string, portalURLs []string) (*Syncer, error) {
+func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
+
+	// create a context
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
 
 	// create database
 	dbName = strings.Replace(dbName, "/", "_", -1)
@@ -196,18 +202,14 @@ func newTestSyncer(ctx context.Context, dbName string, portalURLs []string) (*Sy
 		return nil, err
 	}
 
-	// Define a new context with a timeout to handle the database setup.
-	dbCtx, cancel := context.WithTimeout(ctx, database.MongoDefaultTimeout)
-	defer cancel()
-
 	// purge it
-	err = db.Purge(dbCtx)
+	err = db.Purge(ctx)
 	if err != nil {
 		return nil, err
 	}
 
 	// create a syncer
-	return New(ctx, db, portalURLs, logger)
+	return New(db, portalURLs, logger)
 }
 
 // randomHash returns a random hash

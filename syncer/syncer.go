@@ -37,20 +37,18 @@ type (
 		// fetch that portal's blocklist, we know we can stop paging
 		lastSyncedHash map[string]string
 
-		staticCtx        context.Context
 		staticDB         *database.DB
 		staticLogger     *logrus.Logger
 		staticMu         sync.Mutex
 		staticPortalURLs []string
-		staticWaitGroup  sync.WaitGroup
+
+		staticStopChan  chan struct{}
+		staticWaitGroup sync.WaitGroup
 	}
 )
 
 // New returns a new Syncer with the given parameters.
-func New(ctx context.Context, db *database.DB, portalURLs []string, logger *logrus.Logger) (*Syncer, error) {
-	if ctx == nil {
-		return nil, errors.New("no context provided")
-	}
+func New(db *database.DB, portalURLs []string, logger *logrus.Logger) (*Syncer, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
@@ -60,10 +58,10 @@ func New(ctx context.Context, db *database.DB, portalURLs []string, logger *logr
 	s := &Syncer{
 		lastSyncedHash: make(map[string]string),
 
-		staticCtx:        ctx,
 		staticDB:         db,
 		staticLogger:     logger,
 		staticPortalURLs: portalURLs,
+		staticStopChan:   make(chan struct{}),
 	}
 	return s, nil
 }
@@ -101,17 +99,26 @@ func (s *Syncer) Start() error {
 
 // Stop waits for the syncer's waitgroup and times out after one minute.
 func (s *Syncer) Stop() error {
+	// check whether the syncer was started
+	s.staticMu.Lock()
+	if !s.started {
+		s.staticMu.Unlock()
+		return errors.New("syncer not started")
+	}
+	s.started = false
+	s.staticMu.Unlock()
+
+	// stop the syncer by closing the stop channel
+	close(s.staticStopChan)
+
+	// wait for the waitgroup, timeout and signal unclean shutdown after 1m
 	c := make(chan struct{})
 	go func() {
 		defer close(c)
 		s.staticWaitGroup.Wait()
 	}()
-
 	select {
 	case <-c:
-		s.staticMu.Lock()
-		defer s.staticMu.Unlock()
-		s.started = false
 		return nil
 	case <-time.After(time.Minute):
 		return errors.New("unclean syncer shutdown")
@@ -130,7 +137,7 @@ func (s *Syncer) threadedSyncLoop() {
 		}
 
 		select {
-		case <-s.staticCtx.Done():
+		case <-s.staticStopChan:
 			return
 		case <-time.After(syncInterval):
 		}
@@ -203,13 +210,18 @@ func (s *Syncer) managedSyncPortals() error {
 			continue
 		}
 
+		// create context
+		ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+
 		// bulk insert all of the hashes into the database
-		added, err := s.staticDB.CreateBlockedSkylinkBulk(s.staticCtx, hashes)
+		added, err := s.staticDB.CreateBlockedSkylinkBulk(ctx, hashes)
 		if err != nil {
+			cancel()
 			logger.Errorf("failed inserting hashes from '%s' into our database, err '%v'", portalURL, err)
 			continue
 		}
 
+		cancel()
 		logger.Infof("added %v hashes from portal '%s'", added, portalURL)
 
 		// update the last synced hash to avoid paging through the entire

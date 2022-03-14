@@ -152,7 +152,7 @@ func newTestBlocker(ctx context.Context, dbName string, api skyd.API) (*Blocker,
 	}
 
 	// create the blocker
-	blocker, err := New(ctx, api, db, logger)
+	blocker, err := New(api, db, logger)
 	if err != nil {
 		return nil, err
 	}

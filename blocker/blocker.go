@@ -52,20 +52,17 @@ type (
 		// to block.
 		latestBlockTime time.Time
 
-		staticCtx       context.Context
 		staticDB        *database.DB
 		staticLogger    *logrus.Logger
 		staticMu        sync.Mutex
 		staticSkydAPI   skyd.API
+		staticStopChan  chan struct{}
 		staticWaitGroup sync.WaitGroup
 	}
 )
 
 // New returns a new Blocker with the given parameters.
-func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
-	if ctx == nil {
-		return nil, errors.New("no context provided")
-	}
+func New(skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
@@ -76,10 +73,10 @@ func New(ctx context.Context, skydAPI skyd.API, db *database.DB, logger *logrus.
 		return nil, errors.New("no Skyd API provided")
 	}
 	bl := &Blocker{
-		staticCtx:     ctx,
-		staticDB:      db,
-		staticLogger:  logger,
-		staticSkydAPI: skydAPI,
+		staticDB:       db,
+		staticLogger:   logger,
+		staticSkydAPI:  skydAPI,
+		staticStopChan: make(chan struct{}),
 	}
 	return bl, nil
 }
@@ -97,7 +94,7 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 	for start < len(hashes) {
 		// check whether we need to escape
 		select {
-		case <-bl.staticCtx.Done():
+		case <-bl.staticStopChan:
 			return numBlocked, numInvalid, nil
 		default:
 		}
@@ -115,7 +112,9 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 		// escape early because something is probably wrong
 		blocked, invalid, err := bl.staticSkydAPI.BlockHashes(batch)
 		if err != nil {
-			err = errors.Compose(err, bl.staticDB.MarkFailed(batch))
+			ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+			defer cancel()
+			err = errors.Compose(err, bl.staticDB.MarkFailed(ctx, batch))
 			return numBlocked, numInvalid, err
 		}
 
@@ -123,12 +122,17 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 		numBlocked += len(blocked)
 		numInvalid += len(invalid)
 
+		// create a context
+		ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+
 		// update the documents
-		err1 := bl.staticDB.MarkSucceeded(blocked)
-		err2 := bl.staticDB.MarkInvalid(invalid)
+		err1 := bl.staticDB.MarkSucceeded(ctx, blocked)
+		err2 := bl.staticDB.MarkInvalid(ctx, invalid)
 		if err := errors.Compose(err1, err2); err != nil {
+			cancel()
 			return numBlocked, numInvalid, err
 		}
+		cancel()
 
 		// update start
 		start = end
@@ -167,17 +171,26 @@ func (bl *Blocker) Start() error {
 
 // Stop waits for the blocker's waitgroup and times out after one minute.
 func (bl *Blocker) Stop() error {
+	// check whether the blocker was started
+	bl.staticMu.Lock()
+	if !bl.started {
+		bl.staticMu.Unlock()
+		return errors.New("blocker not started")
+	}
+	bl.started = false
+	bl.staticMu.Unlock()
+
+	// stop the blocker by closing the stop channel
+	close(bl.staticStopChan)
+
+	// wait for the waitgroup, timeout and signal unclean shutdown after 1m
 	c := make(chan struct{})
 	go func() {
 		defer close(c)
 		bl.staticWaitGroup.Wait()
 	}()
-
 	select {
 	case <-c:
-		bl.staticMu.Lock()
-		defer bl.staticMu.Unlock()
-		bl.started = false
 		return nil
 	case <-time.After(time.Minute):
 		return errors.New("unclean blocker shutdown")
@@ -198,7 +211,7 @@ func (bl *Blocker) threadedBlockLoop() {
 		}
 
 		select {
-		case <-bl.staticCtx.Done():
+		case <-bl.staticStopChan:
 			return
 		case <-time.After(blockInterval):
 		}
@@ -219,7 +232,7 @@ func (bl *Blocker) threadedRetryLoop() {
 		}
 
 		select {
-		case <-bl.staticCtx.Done():
+		case <-bl.staticStopChan:
 			return
 		case <-time.After(retryInterval):
 		}
@@ -231,8 +244,12 @@ func (bl *Blocker) managedBlock() error {
 	now := time.Now().UTC()
 	from := bl.managedLatestBlockTime()
 
+	// Create a context
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
 	// Fetch hashes to block
-	hashes, err := bl.staticDB.HashesToBlock(from)
+	hashes, err := bl.staticDB.HashesToBlock(ctx, from)
 	if err != nil {
 		return err
 	}
@@ -267,8 +284,12 @@ func (bl *Blocker) managedLatestBlockTime() time.Time {
 // managedRetryHashes fetches all blocked skylinks that failed to get blocked
 // the first time and retries them.
 func (bl *Blocker) managedRetryHashes() error {
+	// Create a context
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
 	// Fetch hashes to retry
-	hashes, err := bl.staticDB.HashesToRetry()
+	hashes, err := bl.staticDB.HashesToRetry(ctx)
 	if err != nil {
 		return err
 	}
