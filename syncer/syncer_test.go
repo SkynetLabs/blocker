@@ -39,7 +39,7 @@ func testLastSyncedHash(t *testing.T) {
 	t.Parallel()
 
 	// create a test syncer
-	s, err := newTestSyncer(t.Name(), nil)
+	s, err := newTestSyncer(context.Background(), t.Name(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,14 +91,15 @@ func testSyncer(t *testing.T) {
 	defer server.Close()
 
 	// create a test syncer that syncs from our server
-	s, err := newTestSyncer(t.Name(), []string{server.URL})
+	ctx, cancel := context.WithCancel(context.Background())
+	s, err := newTestSyncer(ctx, t.Name(), []string{server.URL})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// insert one hash manually, this will assert that our insert ignores
 	// duplicate entries
-	err = s.staticDB.CreateBlockedSkylink(context.Background(), &database.BlockedSkylink{
+	err = s.staticDB.CreateBlockedSkylink(ctx, &database.BlockedSkylink{
 		Hash:           database.Hash{hash1},
 		TimestampAdded: time.Now().UTC(),
 	})
@@ -120,6 +121,15 @@ func testSyncer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// defer a call to stop
+	defer func() {
+		cancel()
+		err := s.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// check in a loop whether we're filling up the database
 	err = build.Retry(100, 100*time.Millisecond, func() error {
@@ -171,14 +181,14 @@ func testSyncer(t *testing.T) {
 }
 
 // newTestSyncer returns a test syncer object.
-func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
+func newTestSyncer(ctx context.Context, dbName string, portalURLs []string) (*Syncer, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
 	// create database
 	dbName = strings.Replace(dbName, "/", "_", -1)
-	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
+	db, err := database.NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
 		Username: "admin",
 		Password: "aO4tV5tC1oU3oQ7u",
 	}, logger)
@@ -187,17 +197,17 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	}
 
 	// Define a new context with a timeout to handle the database setup.
-	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	dbCtx, cancel := context.WithTimeout(ctx, database.MongoDefaultTimeout)
 	defer cancel()
 
 	// purge it
-	err = db.Purge(ctx)
+	err = db.Purge(dbCtx)
 	if err != nil {
 		return nil, err
 	}
 
 	// create a syncer
-	return New(context.Background(), db, portalURLs, logger)
+	return New(ctx, db, portalURLs, logger)
 }
 
 // randomHash returns a random hash
