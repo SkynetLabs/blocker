@@ -170,7 +170,7 @@ func NewTestDB(ctx context.Context, dbName string, logger *logrus.Logger) *DB {
 	}
 
 	// create a context with timeout and purge the database
-	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	ctx, cancel := context.WithTimeout(ctx, MongoDefaultTimeout)
 	defer cancel()
 	err = db.Purge(ctx)
 	if err != nil {

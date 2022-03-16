@@ -13,7 +13,6 @@ import (
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/SkynetLabs/blocker/syncer"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
