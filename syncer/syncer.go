@@ -13,6 +13,13 @@ import (
 	"go.sia.tech/siad/build"
 )
 
+const (
+	// stopTimeoutDuration is the amount of time we wait when stop is called
+	// before cancelling out and returning with an error indicating an unclean
+	// shutdown.
+	stopTimeoutDuration = time.Minute
+)
+
 var (
 	// syncInterval defines the amount of time between syncs of external
 	// portal's blocklists, which can be defined in the environment using the
@@ -120,7 +127,7 @@ func (s *Syncer) Stop() error {
 	select {
 	case <-c:
 		return nil
-	case <-time.After(time.Minute):
+	case <-time.After(stopTimeoutDuration):
 		return errors.New("unclean syncer shutdown")
 	}
 }

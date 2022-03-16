@@ -66,11 +66,11 @@ func main() {
 
 	// Create a connection to the database
 	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
 	db, err := database.New(ctx, uri, dbCreds, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to connect to the db"))
 	}
-	cancel()
 
 	// Blocker env vars.
 	skydPort := defaultSkydPort
@@ -167,9 +167,9 @@ func main() {
 	}
 
 	// Close the database connection
-	ctx, cancel = context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
-	defer cancel()
-	err = db.Close(ctx)
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer dbCancel()
+	err = db.Close(dbCtx)
 	if err != nil {
 		log.Fatal("Failed to disconnect from the database, err: ", err)
 	}

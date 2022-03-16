@@ -16,6 +16,11 @@ const (
 	// blockBatchSize is the max number of (skylink) hashes to be sent for
 	// blocking simultaneously.
 	blockBatchSize = 100
+
+	// stopTimeoutDuration is the amount of time we wait when stop is called
+	// before cancelling out and returning with an error indicating an unclean
+	// shutdown.
+	stopTimeoutDuration = time.Minute
 )
 
 var (
@@ -192,7 +197,7 @@ func (bl *Blocker) Stop() error {
 	select {
 	case <-c:
 		return nil
-	case <-time.After(time.Minute):
+	case <-time.After(stopTimeoutDuration):
 		return errors.New("unclean blocker shutdown")
 	}
 }
