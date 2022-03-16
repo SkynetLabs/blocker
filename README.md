@@ -45,8 +45,6 @@ This service depends on the following environment variables:
 * `API_HOST`, defaults to `sia`
 * `API_PORT`, defaults to `9980`
 * `SIA_API_PASSWORD`
-* `NGINX_HOST`, defaults to `10.10.10.30`
-* `NGINX_PORT`, defaults to `8000`
 * `SKYNET_DB_HOST`
 * `SKYNET_DB_PORT`
 * `SKYNET_DB_USER`
