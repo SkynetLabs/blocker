@@ -37,9 +37,6 @@ type (
 	// api is a helper struct that exposes some methods that allow making skyd
 	// API calls used by both the API and the blocker
 	api struct {
-		staticNginxHost string
-		staticNginxPort int
-
 		staticSkydHost        string
 		staticSkydPort        int
 		staticSkydAPIPassword string
@@ -82,7 +79,7 @@ func (br *blockResponse) InvalidHashes() ([]database.Hash, error) {
 }
 
 // NewAPI creates a new API instance.
-func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skydPort int, db *database.DB, logger *logrus.Logger) (API, error) {
+func NewAPI(skydHost, skydPassword string, skydPort int, db *database.DB, logger *logrus.Logger) (API, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
@@ -91,9 +88,6 @@ func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skyd
 	}
 
 	return &api{
-		staticNginxHost: nginxHost,
-		staticNginxPort: nginxPort,
-
 		staticSkydHost:        skydHost,
 		staticSkydPort:        skydPort,
 		staticSkydAPIPassword: skydPassword,
@@ -126,7 +120,7 @@ func (api *api) BlockHashes(hashes []database.Hash) ([]database.Hash, []database
 	}
 
 	// execute the request
-	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.staticNginxHost, api.staticNginxPort, skydTimeout)
+	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.staticSkydHost, api.staticSkydPort, skydTimeout)
 	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, nil, errors.AddContext(err, "failed to build request to skyd")

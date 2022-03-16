@@ -27,14 +27,6 @@ const (
 	// defaultSkydPort is where we connect to skyd unless overwritten by
 	// "API_PORT" environment variables.
 	defaultSkydPort = 9980
-
-	// defaultNginxHost is where we connect to nginx unless overwritten by
-	// "NGINX_HOST" environment variables.
-	defaultNginxHost = "10.10.10.30"
-
-	// defaultNginxPort is where we connect to nginx unless overwritten by
-	// "NGINX_PORT" environment variables.
-	defaultNginxPort = 8000
 )
 
 func main() {
@@ -79,15 +71,6 @@ func main() {
 	if skydHostEnv := os.Getenv("API_HOST"); skydHostEnv != "" {
 		skydHost = skydHostEnv
 	}
-	nginxPort := defaultNginxPort
-	nginxPortEnv, err := strconv.Atoi(os.Getenv("NGINX_PORT"))
-	if err == nil && nginxPortEnv > 0 {
-		nginxPort = nginxPortEnv
-	}
-	nginxHost := defaultNginxHost
-	if nginxHostEnv := os.Getenv("NGINX_HOST"); nginxHostEnv != "" {
-		nginxHost = nginxHostEnv
-	}
 	skydAPIPassword := os.Getenv("SIA_API_PASSWORD")
 	if skydAPIPassword == "" {
 		log.Fatal(errors.New("SIA_API_PASSWORD is empty, exiting"))
@@ -102,7 +85,7 @@ func main() {
 	}
 
 	// Create a skyd API.
-	skydAPI, err := skyd.NewAPI(nginxHost, nginxPort, skydHost, skydAPIPassword, skydPort, db, logger)
+	skydAPI, err := skyd.NewAPI(skydHost, skydAPIPassword, skydPort, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
 	}
