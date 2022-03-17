@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
@@ -34,10 +36,7 @@ func main() {
 	// Existing variables take precedence and won't be overwritten.
 	_ = godotenv.Load()
 
-	// Initialise the global context and logger. These will be used throughout
-	// the service. Once the context is closed, all background threads will
-	// wind themselves down.
-	ctx := context.Background()
+	// Create a logger
 	logger := logrus.New()
 	logLevel, err := logrus.ParseLevel(os.Getenv("BLOCKER_LOG_LEVEL"))
 	if err != nil {
@@ -51,11 +50,15 @@ func main() {
 		log.Fatal("missing env var SERVER_UID")
 	}
 
-	// Initialised the database connection.
+	// Load the database credentials
 	uri, dbCreds, err := loadDBCredentials()
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to fetch db credentials"))
 	}
+
+	// Create a connection to the database
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
 	db, err := database.New(ctx, uri, dbCreds, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to connect to the db"))
@@ -94,7 +97,7 @@ func main() {
 	}
 
 	// Create the blocker.
-	bl, err := blocker.New(ctx, skydAPI, db, logger)
+	bl, err := blocker.New(skydAPI, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
@@ -107,7 +110,7 @@ func main() {
 
 	// Create the syncer.
 	portalURLs := loadPortalURLs()
-	sync, err := syncer.New(ctx, db, portalURLs, logger)
+	sync, err := syncer.New(db, portalURLs, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate syncer"))
 	}
@@ -124,8 +127,37 @@ func main() {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}
 
-	// TODO: Missing clean shutdown and database disconnect.
-	log.Fatal(server.ListenAndServe(4000))
+	// Start the server
+	go func() {
+		err := server.ListenAndServe(4000)
+		if err != nil {
+			log.Fatal(errors.AddContext(err, "failed to start server"))
+		}
+	}()
+
+	// Catch exit signals
+	exitSignal := make(chan os.Signal, 1)
+	signal.Notify(exitSignal, syscall.SIGINT, syscall.SIGTERM)
+	<-exitSignal
+
+	// Shut down all components
+	err = errors.Compose(
+		bl.Stop(),
+		sync.Stop(),
+	)
+	if err != nil {
+		log.Fatal("Failed to cleanly stop all components, err: ", err)
+	}
+
+	// Close the database connection
+	dbCtx, dbCancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer dbCancel()
+	err = db.Close(dbCtx)
+	if err != nil {
+		log.Fatal("Failed to disconnect from the database, err: ", err)
+	}
+
+	logger.Info("Blocker Terminated.")
 }
 
 // loadDBCredentials creates a new db connection based on credentials found in

@@ -73,15 +73,24 @@ func testBlockHashes(t *testing.T) {
 	api := &mockSkyd{}
 
 	// create the blocker
-	blocker, err := newTestBlocker("BlockHashes", api)
+	ctx, cancel := context.WithCancel(context.Background())
+	blocker, err := newTestBlocker(ctx, "BlockHashes", api)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// defer a db close
+	// start the syncer
+	err = blocker.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// defer a call to stops
 	defer func() {
-		if err := blocker.staticDB.Close(); err != nil {
-			t.Error(err)
+		cancel()
+		err := blocker.Stop()
+		if err != nil {
+			t.Fatal(err)
 		}
 	}()
 
@@ -128,13 +137,13 @@ func testBlockHashes(t *testing.T) {
 }
 
 // newTestBlocker returns a new blocker instance
-func newTestBlocker(dbName string, api skyd.API) (*Blocker, error) {
+func newTestBlocker(ctx context.Context, dbName string, api skyd.API) (*Blocker, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
 	// create database
-	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
+	db, err := database.NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
 		Username: "admin",
 		Password: "aO4tV5tC1oU3oQ7u",
 	}, logger)
@@ -143,7 +152,7 @@ func newTestBlocker(dbName string, api skyd.API) (*Blocker, error) {
 	}
 
 	// create the blocker
-	blocker, err := New(context.Background(), api, db, logger)
+	blocker, err := New(api, db, logger)
 	if err != nil {
 		return nil, err
 	}

@@ -71,6 +71,10 @@ func testRandomHash(t *testing.T) {
 // testSyncer is an integration test that syncs siasky.net's blocklist with our
 // mock skyd instance
 func testSyncer(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
 	// create a mocked blocklist response returning two hashes
 	hash1 := randomHash()
 	hash2 := randomHash()
@@ -98,7 +102,7 @@ func testSyncer(t *testing.T) {
 
 	// insert one hash manually, this will assert that our insert ignores
 	// duplicate entries
-	err = s.staticDB.CreateBlockedSkylink(context.Background(), &database.BlockedSkylink{
+	err = s.staticDB.CreateBlockedSkylink(ctx, &database.BlockedSkylink{
 		Hash:           database.Hash{hash1},
 		TimestampAdded: time.Now().UTC(),
 	})
@@ -107,7 +111,7 @@ func testSyncer(t *testing.T) {
 	}
 
 	// assert the database contains our one entry
-	hashes, _, err := s.staticDB.BlockedHashes(1, 0, 1)
+	hashes, _, err := s.staticDB.BlockedHashes(ctx, 1, 0, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +125,17 @@ func testSyncer(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// defer a call to stop
+	defer func() {
+		err := s.Stop()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
+
 	// check in a loop whether we're filling up the database
 	err = build.Retry(100, 100*time.Millisecond, func() error {
-		hashes, _, err := s.staticDB.BlockedHashes(1, 0, 2)
+		hashes, _, err := s.staticDB.BlockedHashes(ctx, 1, 0, 2)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -137,7 +149,7 @@ func testSyncer(t *testing.T) {
 	}
 
 	// fetch hashes to block, we expect to see two
-	toBlock, err := s.staticDB.HashesToBlock(time.Time{})
+	toBlock, err := s.staticDB.HashesToBlock(ctx, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +163,7 @@ func testSyncer(t *testing.T) {
 	}
 
 	// fetch the entire database entry
-	bsl, err := s.staticDB.FindByHash(context.Background(), toBlock[1])
+	bsl, err := s.staticDB.FindByHash(ctx, toBlock[1])
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,19 +188,19 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
+	// create a context
+	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
+	defer cancel()
+
 	// create database
 	dbName = strings.Replace(dbName, "/", "_", -1)
-	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
+	db, err := database.NewCustomDB(ctx, "mongodb://localhost:37017", dbName, options.Credential{
 		Username: "admin",
 		Password: "aO4tV5tC1oU3oQ7u",
 	}, logger)
 	if err != nil {
 		return nil, err
 	}
-
-	// Define a new context with a timeout to handle the database setup.
-	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
-	defer cancel()
 
 	// purge it
 	err = db.Purge(ctx)
@@ -197,7 +209,7 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	}
 
 	// create a syncer
-	return New(context.Background(), db, portalURLs, logger)
+	return New(db, portalURLs, logger)
 }
 
 // randomHash returns a random hash

@@ -18,7 +18,11 @@ import (
 )
 
 // newTestDB creates a new database for a given test's name.
-func newTestDB(ctx context.Context, dbName string) *DB {
+func newTestDB(dbName string) *DB {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
 	dbName = strings.ReplaceAll(dbName, "/", "-")
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
@@ -92,16 +96,21 @@ func testPing(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+
+	// ping should succeed
 	err := db.Ping(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = db.staticClient.Disconnect(ctx)
+
+	// close it
+	err = db.Close(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
+
+	// ping should fail
 	err = db.Ping(ctx)
 	if err == nil {
 		t.Fatal("should fail")
@@ -116,8 +125,13 @@ func testCreateBlockedSkylink(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// verify we assert 'Hash' is set
 	err := db.CreateBlockedSkylink(ctx, &BlockedSkylink{})
@@ -198,8 +212,13 @@ func testCreateBlockedSkylinkBulk(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// create three blocked skylinks in bulk, make sure it contains a duplicate
 	added, err := db.CreateBlockedSkylinkBulk(ctx, []BlockedSkylink{
@@ -234,8 +253,13 @@ func testIgnoreDuplicateKeyErrors(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// insert two documents with the same hash (triggers duplicate key error)
 	docs := []interface{}{
@@ -280,12 +304,17 @@ func testIsAllowListedSkylink(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// Add a skylink in the allow list
 	skylink := "_B19BtlWtjjR7AD0DDzxYanvIhZ7cxXrva5tNNxDht1kaA"
-	_, err := db.staticAllowList.InsertOne(ctx, &AllowListedSkylink{
+	err := db.CreateAllowListedSkylink(ctx, &AllowListedSkylink{
 		Skylink:        skylink,
 		Description:    "test skylink",
 		TimestampAdded: time.Now().UTC(),
@@ -322,12 +351,17 @@ func testMarkSucceeded(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// ensure 'MarkSucceeded' can handle an empty slice
 	var empty []Hash
-	err := db.MarkSucceeded(empty)
+	err := db.MarkSucceeded(ctx, empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -349,7 +383,7 @@ func testMarkSucceeded(t *testing.T) {
 		Failed:         true,
 	})
 
-	toRetry, err := db.HashesToRetry()
+	toRetry, err := db.HashesToRetry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -357,12 +391,12 @@ func testMarkSucceeded(t *testing.T) {
 		t.Fatalf("unexpected number of documents, %v != 1", len(toRetry))
 	}
 
-	err = db.MarkSucceeded(toRetry)
+	err = db.MarkSucceeded(ctx, toRetry)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	toRetry, err = db.HashesToRetry()
+	toRetry, err = db.HashesToRetry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,12 +413,17 @@ func testMarkFailed(t *testing.T) {
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
 	// ensure 'MarkFailed' can handle an empty slice
 	var empty []Hash
-	err := db.MarkFailed(empty)
+	err := db.MarkFailed(ctx, empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -414,20 +453,20 @@ func testMarkFailed(t *testing.T) {
 	})
 
 	// fetch a cursor that holds all docs
-	c, err := db.staticDB.Collection(collSkylinks).Find(db.ctx, bson.M{})
+	c, err := db.staticDB.Collection(collSkylinks).Find(ctx, bson.M{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// convert it to blocked skylinks
 	all := make([]BlockedSkylink, 0)
-	err = c.All(db.ctx, &all)
+	err = c.All(ctx, &all)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// check we currently have 0 failed hashes
-	toRetry, err := db.HashesToRetry()
+	toRetry, err := db.HashesToRetry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -440,13 +479,13 @@ func testMarkFailed(t *testing.T) {
 	for i, doc := range all {
 		hashes[i] = doc.Hash
 	}
-	err = db.MarkFailed(hashes)
+	err = db.MarkFailed(ctx, hashes)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// check we now have 2
-	toRetry, err = db.HashesToRetry()
+	toRetry, err = db.HashesToRetry(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -463,17 +502,17 @@ func testMarkFailed(t *testing.T) {
 // testMarkInvalid is a unit test that covers the functionality of the
 // 'MarkInvalid' method on the database.
 func testMarkInvalid(t *testing.T) {
-	// create context
+	// create a context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
-	db := newTestDB(ctx, t.Name())
-	defer db.Close()
+	db := newTestDB(t.Name())
+	defer db.Close(ctx)
 
 	// ensure 'MarkInvalid' can handle an empty slice
 	var empty []Hash
-	err := db.MarkInvalid(empty)
+	err := db.MarkInvalid(ctx, empty)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -492,7 +531,7 @@ func testMarkInvalid(t *testing.T) {
 	}
 
 	// assert there's one hash that needs to be blocked
-	toBlock, err := db.HashesToBlock(time.Time{})
+	toBlock, err := db.HashesToBlock(ctx, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +549,7 @@ func testMarkInvalid(t *testing.T) {
 	}
 
 	// mark it as invalid
-	err = db.MarkInvalid([]Hash{hash})
+	err = db.MarkInvalid(ctx, []Hash{hash})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,7 +564,7 @@ func testMarkInvalid(t *testing.T) {
 	}
 
 	// assert 'HashesToBlock' excludes invalid documents
-	toBlock, err = db.HashesToBlock(time.Time{})
+	toBlock, err = db.HashesToBlock(ctx, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
