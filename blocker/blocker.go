@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/SkynetLabs/skynet-accounts/build"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
@@ -57,31 +57,31 @@ type (
 		// to block.
 		latestBlockTime time.Time
 
-		staticDB        *database.DB
-		staticLogger    *logrus.Logger
-		staticMu        sync.Mutex
-		staticSkydAPI   skyd.API
-		staticStopChan  chan struct{}
-		staticWaitGroup sync.WaitGroup
+		staticDB         *database.DB
+		staticLogger     *logrus.Logger
+		staticMu         sync.Mutex
+		staticSkydClient *api.Client
+		staticStopChan   chan struct{}
+		staticWaitGroup  sync.WaitGroup
 	}
 )
 
 // New returns a new Blocker with the given parameters.
-func New(skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
+func New(skydClient *api.Client, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
 	if logger == nil {
 		return nil, errors.New("no logger provided")
 	}
-	if skydAPI == nil {
-		return nil, errors.New("no Skyd API provided")
+	if skydClient == nil {
+		return nil, errors.New("no Skyd client provided")
 	}
 	bl := &Blocker{
-		staticDB:       db,
-		staticLogger:   logger,
-		staticSkydAPI:  skydAPI,
-		staticStopChan: make(chan struct{}),
+		staticDB:         db,
+		staticLogger:     logger,
+		staticSkydClient: skydClient,
+		staticStopChan:   make(chan struct{}),
 	}
 	return bl, nil
 }
@@ -115,7 +115,7 @@ func (bl *Blocker) BlockHashes(hashes []database.Hash) (int, int, error) {
 
 		// send the batch to skyd, if an error occurs we mark it as failed and
 		// escape early because something is probably wrong
-		blocked, invalid, err := bl.staticSkydAPI.BlockHashes(batch)
+		blocked, invalid, err := bl.staticSkydClient.BlockHashes(batch)
 		if err != nil {
 			ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
 			defer cancel()

@@ -10,9 +10,7 @@ import (
 	url "net/url"
 
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/sirupsen/logrus"
-	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // apiTester is a helper struct wrapping handlers of the underlying API that
@@ -27,32 +25,16 @@ func newAPITester(api *API) *apiTester {
 }
 
 // newTestAPI returns a new API instance
-func newTestAPI(dbName string, skyd skyd.API) (*API, error) {
+func newTestAPI(dbName string, client *Client) (*API, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
 
 	// create database
-	db, err := database.NewCustomDB(context.Background(), "mongodb://localhost:37017", dbName, options.Credential{
-		Username: "admin",
-		Password: "aO4tV5tC1oU3oQ7u",
-	}, logger)
-	if err != nil {
-		return nil, err
-	}
-
-	// create a context with timeout
-	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
-	defer cancel()
-
-	// purge the database
-	err = db.Purge(ctx)
-	if err != nil {
-		panic(err)
-	}
+	db := database.NewTestDB(context.Background(), dbName, logger)
 
 	// create the API
-	api, err := New(skyd, db, logger)
+	api, err := New(client, db, logger)
 	if err != nil {
 		return nil, err
 	}

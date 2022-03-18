@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
+	"github.com/SkynetLabs/blocker/modules"
 	"github.com/julienschmidt/httprouter"
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
@@ -66,7 +66,7 @@ type (
 	// containing a pow.
 	BlockWithPoWPOST struct {
 		BlockPOST
-		PoW blocker.BlockPoW `json:"pow"`
+		PoW modules.BlockPoW `json:"pow"`
 	}
 
 	// BlockWithPoWGET is the response a user gets from the /blockpow
@@ -234,7 +234,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 // blockWithPoWGET is the handler for the /blockpow [GET] endpoint.
 func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	skyapi.WriteJSON(w, BlockWithPoWGET{
-		Target: hex.EncodeToString(blocker.MySkyTarget[:]),
+		Target: hex.EncodeToString(modules.MySkyTarget[:]),
 	})
 }
 
@@ -248,7 +248,7 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 	_ = skylink.LoadString(string(bp.Skylink))
 
 	// Resolve the skylink
-	resolved, err := api.staticSkydAPI.ResolveSkylink(skylink)
+	resolved, err := api.staticSkydClient.ResolveSkylink(skylink)
 	if err == nil {
 		// replace the skylink with the resolved skylink
 		skylink = resolved

@@ -5,7 +5,6 @@ import (
 	"net/http"
 
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
 	"gitlab.com/NebulousLabs/errors"
@@ -14,31 +13,31 @@ import (
 // API is our central entry point to all subsystems relevant to serving
 // requests.
 type API struct {
-	staticDB      *database.DB
-	staticLogger  *logrus.Logger
-	staticRouter  *httprouter.Router
-	staticSkydAPI skyd.API
+	staticDB         *database.DB
+	staticLogger     *logrus.Logger
+	staticRouter     *httprouter.Router
+	staticSkydClient *Client
 }
 
 // New creates a new API instance.
-func New(skydAPI skyd.API, db *database.DB, logger *logrus.Logger) (*API, error) {
+func New(skydClient *Client, db *database.DB, logger *logrus.Logger) (*API, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
 	if logger == nil {
 		return nil, errors.New("no logger provided")
 	}
-	if skydAPI == nil {
-		return nil, errors.New("no skyd API provided")
+	if skydClient == nil {
+		return nil, errors.New("no skyd client provided")
 	}
 	router := httprouter.New()
 	router.RedirectTrailingSlash = true
 
 	api := &API{
-		staticDB:      db,
-		staticLogger:  logger,
-		staticRouter:  router,
-		staticSkydAPI: skydAPI,
+		staticDB:         db,
+		staticLogger:     logger,
+		staticRouter:     router,
+		staticSkydClient: skydClient,
 	}
 
 	api.buildHTTPRoutes()

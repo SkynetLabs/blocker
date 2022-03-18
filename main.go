@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -13,7 +15,6 @@ import (
 	"github.com/SkynetLabs/blocker/api"
 	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
-	"github.com/SkynetLabs/blocker/skyd"
 	"github.com/SkynetLabs/blocker/syncer"
 	"github.com/joho/godotenv"
 	"github.com/sirupsen/logrus"
@@ -87,17 +88,20 @@ func main() {
 		api.AccountsPort = aPort
 	}
 
-	// Create a skyd API.
-	skydAPI, err := skyd.NewAPI(skydHost, skydAPIPassword, skydPort, db, logger)
-	if err != nil {
-		log.Fatal(errors.AddContext(err, "failed to instantiate Skyd API"))
-	}
-	if !skydAPI.IsSkydUp() {
+	// Build auth header
+	var headers http.Header
+	encoded := base64.StdEncoding.EncodeToString([]byte(":" + skydAPIPassword))
+	headers.Set("Authorization", fmt.Sprintf("Basic %s", encoded))
+
+	// Create a skyd client
+	skydUrl := fmt.Sprintf("http://%s:%d", skydHost, skydPort)
+	skydClient := api.NewSkydClient(skydUrl, headers)
+	if !skydClient.DaemonReady() {
 		log.Fatal(errors.New("skyd down, exiting"))
 	}
 
 	// Create the blocker.
-	bl, err := blocker.New(skydAPI, db, logger)
+	bl, err := blocker.New(skydClient, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to instantiate blocker"))
 	}
@@ -122,7 +126,7 @@ func main() {
 	}
 
 	// Initialise the server.
-	server, err := api.New(skydAPI, db, logger)
+	server, err := api.New(skydClient, db, logger)
 	if err != nil {
 		log.Fatal(errors.AddContext(err, "failed to build the api"))
 	}
