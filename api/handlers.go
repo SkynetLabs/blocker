@@ -132,7 +132,7 @@ func (api *API) blocklistGET(w http.ResponseWriter, r *http.Request, _ httproute
 		return
 	}
 
-	blocked, more, err := api.staticDB.BlockedHashes(sort, offset, limit)
+	blocked, more, err := api.staticDB.BlockedHashes(r.Context(), sort, offset, limit)
 	if err != nil {
 		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
 		return

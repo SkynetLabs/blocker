@@ -71,15 +71,24 @@ func testBlockHashes(t *testing.T, server *httptest.Server) {
 	client := api.NewClient(server.URL)
 
 	// create the blocker
-	blocker, err := newTestBlocker("BlockHashes", client)
+	ctx, cancel := context.WithCancel(context.Background())
+	blocker, err := newTestBlocker(ctx, "BlockHashes", client)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// defer a db close
+	// start the syncer
+	err = blocker.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// defer a call to stops
 	defer func() {
-		if err := blocker.staticDB.Close(); err != nil {
-			t.Error(err)
+		cancel()
+		err := blocker.Stop()
+		if err != nil {
+			t.Fatal(err)
 		}
 	}()
 
@@ -117,7 +126,7 @@ func testBlockHashes(t *testing.T, server *httptest.Server) {
 }
 
 // newTestBlocker returns a new blocker instance
-func newTestBlocker(dbName string, skydClient *api.Client) (*Blocker, error) {
+func newTestBlocker(ctx context.Context, dbName string, skydClient *api.Client) (*Blocker, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
@@ -126,7 +135,7 @@ func newTestBlocker(dbName string, skydClient *api.Client) (*Blocker, error) {
 	db := database.NewTestDB(context.Background(), dbName, logger)
 
 	// create the blocker
-	blocker, err := New(context.Background(), skydClient, db, logger)
+	blocker, err := New(skydClient, db, logger)
 	if err != nil {
 		return nil, err
 	}
