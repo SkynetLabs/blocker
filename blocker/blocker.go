@@ -60,14 +60,14 @@ type (
 		staticDB         *database.DB
 		staticLogger     *logrus.Logger
 		staticMu         sync.Mutex
-		staticSkydClient *api.Client
+		staticSkydClient *api.SkydClient
 		staticStopChan   chan struct{}
 		staticWaitGroup  sync.WaitGroup
 	}
 )
 
 // New returns a new Blocker with the given parameters.
-func New(skydClient *api.Client, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
+func New(skydClient *api.SkydClient, db *database.DB, logger *logrus.Logger) (*Blocker, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}

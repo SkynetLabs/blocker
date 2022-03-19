@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,9 +24,9 @@ const (
 )
 
 type (
-	// Client is a helper struct that gets initialised using a portal url. It
-	// exposes API methods and abstracts the response handling.
-	Client struct {
+	// SkydClient is a helper struct that gets initialised using a portal url.
+	// It exposes API methods and abstracts the response handling.
+	SkydClient struct {
 		staticDefaultHeaders http.Header
 		staticPortalURL      string
 	}
@@ -59,21 +60,22 @@ type (
 	}
 )
 
-// NewClient returns a new Client instance for given portal url.
-func NewClient(portalURL string) *Client {
-	return NewCustomClient(portalURL, http.Header{})
-}
-
 // NewSkydClient returns a client that has the default user-agent set.
-func NewSkydClient(portalURL string, headers http.Header) *Client {
-	headers.Add("User-Agent", "Sia-Agent")
-	return NewCustomClient(portalURL, headers)
+func NewSkydClient(portalURL, apiPassword string) *SkydClient {
+	headers := http.Header{}
+	if apiPassword != "" {
+		encoded := base64.StdEncoding.EncodeToString([]byte(":" + apiPassword))
+		headers.Set("Authorization", fmt.Sprintf("Basic %s", encoded))
+	}
+	headers.Set("User-Agent", "Sia-Agent")
+	return NewCustomSkydClient(portalURL, headers)
 }
 
-// NewCustomClient returns a new Client instance for given portal url and lets
-// you pass a set of headers that will be set on every request.
-func NewCustomClient(portalURL string, headers http.Header) *Client {
-	return &Client{
+// NewCustomSkydClient returns a new SkydClient instance for given portal url
+// and lets you pass a set of headers that will be set on every request.
+func NewCustomSkydClient(portalURL string, headers http.Header) *SkydClient {
+	headers.Set("User-Agent", "Sia-Agent")
+	return &SkydClient{
 		staticDefaultHeaders: headers,
 		staticPortalURL:      portalURL,
 	}
@@ -99,7 +101,7 @@ func (br *BlockResponse) InvalidHashes() ([]database.Hash, error) {
 }
 
 // BlocklistGET calls the `/portal/blocklist` endpoint with given parameters
-func (c *Client) BlocklistGET(offset int) (*BlocklistGET, error) {
+func (c *SkydClient) BlocklistGET(offset int) (*BlocklistGET, error) {
 	// set url values
 	query := url.Values{}
 	query.Set("offset", fmt.Sprint(offset))
@@ -118,7 +120,7 @@ func (c *Client) BlocklistGET(offset int) (*BlocklistGET, error) {
 // BlockHashes will perform an API call to skyd to block the given hashes. It
 // returns which hashes were blocked, which hashes were invalid and potentially
 // an error.
-func (c *Client) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
+func (c *SkydClient) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
 	// convert the hashes to strings
 	adds := make([]string, len(hashes))
 	for h, hash := range hashes {
@@ -157,7 +159,7 @@ func (c *Client) BlockHashes(hashes []database.Hash) ([]database.Hash, []databas
 }
 
 // ResolveSkylink will resolve the given skylink.
-func (c *Client) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
+func (c *SkydClient) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
 	// no need to resolve the skylink if it's a v1 skylink
 	if skylink.IsSkylinkV1() {
 		return skylink, nil
@@ -181,7 +183,7 @@ func (c *Client) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink,
 
 // DaemonReady connects to the local skyd and checks its status.
 // Returns true only if skyd is fully ready.
-func (c *Client) DaemonReady() bool {
+func (c *SkydClient) DaemonReady() bool {
 	var response DaemonReadyResponse
 	err := c.get("/daemon/ready", url.Values{}, &response)
 	if err != nil {
@@ -197,7 +199,7 @@ func (c *Client) DaemonReady() bool {
 // get is a helper function that executes a GET request on the given endpoint
 // with the provided query values. The response will get unmarshaled into the
 // given response object.
-func (c *Client) get(endpoint string, query url.Values, obj interface{}) error {
+func (c *SkydClient) get(endpoint string, query url.Values, obj interface{}) error {
 	// create the request
 	queryString := query.Encode()
 	url := fmt.Sprintf("%s%s", c.staticPortalURL, endpoint)
@@ -233,7 +235,7 @@ func (c *Client) get(endpoint string, query url.Values, obj interface{}) error {
 
 // post is a helper function that executes a POST request on the given endpoint
 // with the provided query values.
-func (c *Client) post(endpoint string, query url.Values, body io.Reader, obj interface{}) error {
+func (c *SkydClient) post(endpoint string, query url.Values, body io.Reader, obj interface{}) error {
 	// create the request
 	url := fmt.Sprintf("%s%s?%s", c.staticPortalURL, endpoint, query.Encode())
 	req, err := http.NewRequest(http.MethodPost, url, body)

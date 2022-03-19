@@ -107,7 +107,7 @@ func TestHandlers(t *testing.T) {
 // routes and contains all shared logic.
 func testHandleBlockRequest(t *testing.T, server *httptest.Server) {
 	// create a client that connects to our server
-	client := NewClient(server.URL)
+	client := NewSkydClient(server.URL, "")
 
 	// create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
@@ -230,7 +230,7 @@ func testHandleBlockRequest(t *testing.T, server *httptest.Server) {
 // testHandleBlocklistGET verifies the GET /blocklist endpoint
 func testHandleBlocklistGET(t *testing.T, server *httptest.Server) {
 	// create a client that connects to our server
-	client := NewClient(server.URL)
+	client := NewSkydClient(server.URL, "")
 
 	// create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)

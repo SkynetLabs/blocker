@@ -68,7 +68,7 @@ func TestBlocker(t *testing.T) {
 // testBlockHashes is a unit test that covers the 'blockHashes' method.
 func testBlockHashes(t *testing.T, server *httptest.Server) {
 	// create a client that connects to our server
-	client := api.NewClient(server.URL)
+	client := api.NewSkydClient(server.URL, "")
 
 	// create the blocker
 	ctx, cancel := context.WithCancel(context.Background())
@@ -126,7 +126,7 @@ func testBlockHashes(t *testing.T, server *httptest.Server) {
 }
 
 // newTestBlocker returns a new blocker instance
-func newTestBlocker(ctx context.Context, dbName string, skydClient *api.Client) (*Blocker, error) {
+func newTestBlocker(ctx context.Context, dbName string, skydClient *api.SkydClient) (*Blocker, error) {
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard

@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log"
-	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -88,14 +86,9 @@ func main() {
 		api.AccountsPort = aPort
 	}
 
-	// Build auth header
-	var headers http.Header
-	encoded := base64.StdEncoding.EncodeToString([]byte(":" + skydAPIPassword))
-	headers.Set("Authorization", fmt.Sprintf("Basic %s", encoded))
-
 	// Create a skyd client
 	skydUrl := fmt.Sprintf("http://%s:%d", skydHost, skydPort)
-	skydClient := api.NewSkydClient(skydUrl, headers)
+	skydClient := api.NewSkydClient(skydUrl, skydAPIPassword)
 	if !skydClient.DaemonReady() {
 		log.Fatal(errors.New("skyd down, exiting"))
 	}
