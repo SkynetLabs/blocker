@@ -171,7 +171,7 @@ func (s *Syncer) managedSyncPortals() error {
 		logger.Infof("syncing blocklist for portal '%s'", portalURL)
 
 		// create a client and fetch the last synced hash
-		client := api.NewClient(portalURL)
+		client := api.NewSkydClient(portalURL, "")
 		lastSynced := s.managedLastSyncedHash(portalURL)
 		reporter := database.Reporter{Name: portalURL}
 

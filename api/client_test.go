@@ -16,8 +16,9 @@ func mockPortalBlocklistResponse(w http.ResponseWriter, r *http.Request) {
 	skyapi.WriteJSON(w, blg)
 }
 
-// TestClient contains subtests for the client and makes up the testing suite
-func TestClient(t *testing.T) {
+// TestSkydClient contains subtests for the client and makes up the testing
+// suite
+func TestSkydClient(t *testing.T) {
 	if testing.Short() {
 		t.SkipNow()
 	}
@@ -45,7 +46,7 @@ func TestClient(t *testing.T) {
 
 // testBlocklistGET ensures the client can fetch the blocklist
 func testBlocklistGET(t *testing.T, s *httptest.Server) {
-	c := NewClient(s.URL)
+	c := NewSkydClient(s.URL, "")
 	bl, err := c.BlocklistGET(0)
 	if err != nil {
 		t.Fatal(err)
