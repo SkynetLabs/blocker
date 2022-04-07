@@ -51,7 +51,7 @@ func TestDatabase(t *testing.T) {
 		name string
 		test func(t *testing.T)
 	}{
-		
+
 		{
 			name: "BlockedHashes",
 			test: testBlockedHashes,
@@ -109,6 +109,37 @@ func testBlockedHashes(t *testing.T) {
 			t.Fatal(err)
 		}
 	}()
+
+	// assert there's no hash that needs to be blocked
+	toBlock, err := db.HashesToBlock(ctx, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 0 {
+		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
+	}
+
+	// insert a regular document
+	hash := HashBytes([]byte("skylink_1"))
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Skylink:        "skylink_1",
+		Hash:           hash,
+		Reporter:       Reporter{},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert there's one hash that needs to be blocked
+	toBlock, err = db.HashesToBlock(ctx, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 1 {
+		t.Fatalf("expected 1 hash, instead it was %v", len(toBlock))
+	}
 }
 
 // testCreateBlockedSkylink tests creating and fetching a blocked skylink from
@@ -566,7 +597,6 @@ func testMarkInvalid(t *testing.T) {
 		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
 	}
 }
-
 
 // testPing is a unit test for the database's Ping method.
 func testPing(t *testing.T) {
