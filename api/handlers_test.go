@@ -6,12 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	url "net/url"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/SkynetLabs/blocker/database"
+	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 )
 
@@ -22,30 +24,20 @@ var (
 	v2SkylinkStr = "AQBst6HgaJ0PIBMtmQ2qgH_wQlFg4bNnwAhff7DmJP6oyg"
 )
 
-// mockSkyd is a helper struct that implements the Skyd API interface
-type mockSkyd struct{}
-
-// the following methods are the implementation of the interface, it's
-// essentially all no-ops except for the resolver which resolves a predefined v2
-// skylink to its v1.
-func (api *mockSkyd) BlockHashes(hashes []string) error { return nil }
-func (api *mockSkyd) IsSkydUp() bool                    { return true }
-func (api *mockSkyd) ResolveSkylink(skylink skymodules.Skylink) (skymodules.Skylink, error) {
-	if skylink.IsSkylinkV2() && skylink.String() == v2SkylinkStr {
-		var v1 skymodules.Skylink
-		if err := v1.LoadString(v1SkylinkStr); err != nil {
-			panic(err)
-		}
-		return v1, nil
-	}
-	return skylink, nil
-}
-
 // mockResponseWriter is a helper struct that implements the response writer
 // interface.
 type mockResponseWriter struct {
 	staticBuffer *bytes.Buffer
 	staticHeader http.Header
+}
+
+// newMockResponseWriter returns a response writer
+func newMockResponseWriter() *mockResponseWriter {
+	header := make(http.Header)
+	return &mockResponseWriter{
+		staticBuffer: bytes.NewBuffer(nil),
+		staticHeader: header,
+	}
 }
 
 // the following methods are the implementation of the interface, it's
@@ -64,12 +56,18 @@ func (rw *mockResponseWriter) Reset() {
 	}
 }
 
-func newMockResponseWriter() *mockResponseWriter {
-	header := make(http.Header)
-	return &mockResponseWriter{
-		staticBuffer: bytes.NewBuffer(nil),
-		staticHeader: header,
-	}
+// mockBlocklistResponse is a mock handler for the /skynet/blocklist endpoint
+func mockBlocklistResponse(w http.ResponseWriter, r *http.Request) {
+	var response BlockResponse
+	skyapi.WriteJSON(w, response)
+}
+
+// mockResolveResponse is a mock handler for the resolve endpoint, it simply
+// resolves the v2 skylink to its v1 counterpart.
+func mockResolveResponse(w http.ResponseWriter, r *http.Request) {
+	var response resolveResponse
+	response.Skylink = v1SkylinkStr
+	skyapi.WriteJSON(w, response)
 }
 
 // TestHandlers runs the handlers unit tests.
@@ -79,9 +77,16 @@ func TestHandlers(t *testing.T) {
 	}
 	t.Parallel()
 
+	// create a test server that returns mocked responses used by our subtests
+	mux := http.NewServeMux()
+	mux.HandleFunc("/skynet/blocklist", mockBlocklistResponse)
+	mux.HandleFunc(fmt.Sprintf("/skynet/resolve/%s", v2SkylinkStr), mockResolveResponse)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
 	tests := []struct {
 		name string
-		test func(t *testing.T)
+		test func(t *testing.T, s *httptest.Server)
 	}{
 		{
 			name: "HandleBlockRequest",
@@ -93,21 +98,23 @@ func TestHandlers(t *testing.T) {
 		},
 	}
 	for _, test := range tests {
-		t.Run(test.name, test.test)
+		t.Run(test.name, func(t *testing.T) { test.test(t, server) })
 	}
 }
 
 // testHandleBlockRequest verifies the functionality of the block request
 // handler in the API, this method is called by both the regular and PoW block
 // routes and contains all shared logic.
-func testHandleBlockRequest(t *testing.T) {
+func testHandleBlockRequest(t *testing.T, server *httptest.Server) {
+	// create a client that connects to our server
+	client := NewSkydClient(server.URL, "")
+
 	// create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
 	defer cancel()
 
 	// create a new test API
-	skyd := &mockSkyd{}
-	api, err := newTestAPI("HandleBlockRequest", skyd)
+	api, err := newTestAPI("HandleBlockRequest", client)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,14 +231,16 @@ func testHandleBlockRequest(t *testing.T) {
 }
 
 // testHandleBlocklistGET verifies the GET /blocklist endpoint
-func testHandleBlocklistGET(t *testing.T) {
+func testHandleBlocklistGET(t *testing.T, server *httptest.Server) {
+	// create a client that connects to our server
+	client := NewSkydClient(server.URL, "")
+
 	// create a context with timeout
 	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
 	defer cancel()
 
 	// create a new test API
-	skyd := &mockSkyd{}
-	api, err := newTestAPI("HandleBlockRequest", skyd)
+	api, err := newTestAPI("HandleBlockRequest", client)
 	if err != nil {
 		t.Fatal(err)
 	}

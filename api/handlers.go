@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SkynetLabs/blocker/blocker"
 	"github.com/SkynetLabs/blocker/database"
+	"github.com/SkynetLabs/blocker/modules"
 	"github.com/julienschmidt/httprouter"
 	"gitlab.com/NebulousLabs/errors"
 	skyapi "gitlab.com/SkynetLabs/skyd/node/api"
@@ -75,7 +75,7 @@ type (
 	// containing a pow.
 	BlockWithPoWPOST struct {
 		BlockPOST
-		PoW blocker.BlockPoW `json:"pow"`
+		PoW modules.BlockPoW `json:"pow"`
 	}
 
 	// BlockWithPoWGET is the response a user gets from the /blockpow
@@ -137,13 +137,13 @@ func (api *API) blocklistGET(w http.ResponseWriter, r *http.Request, _ httproute
 	// parse offset and limit parameters
 	sort, offset, limit, err := parseListParameters(r.URL.Query())
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
-	blocked, more, err := api.staticDB.BlockedHashes(sort, offset, limit)
+	blocked, more, err := api.staticDB.BlockedHashes(r.Context(), sort, offset, limit)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		WriteError(w, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -190,7 +190,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	var body BlockPOST
 	err := json.NewDecoder(b).Decode(&body)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -222,7 +222,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	var body BlockWithPoWPOST
 	err := json.NewDecoder(b).Decode(&body)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -232,7 +232,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	// Verify the pow.
 	err = body.PoW.Verify()
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -243,7 +243,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 // blockWithPoWGET is the handler for the /blockpow [GET] endpoint.
 func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	skyapi.WriteJSON(w, BlockWithPoWGET{
-		Target: hex.EncodeToString(blocker.MySkyTarget[:]),
+		Target: hex.EncodeToString(modules.MySkyTarget[:]),
 	})
 }
 
@@ -254,7 +254,7 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 	// Resolve the post body into a hash
 	hash, err := api.resolveHash(bp)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{"failed to resolve skylink"}, http.StatusBadRequest)
+		WriteError(w, errors.AddContext(err, "failed to resolve hash"), http.StatusBadRequest)
 		return
 	}
 
@@ -286,7 +286,7 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 		return
 	}
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		WriteError(w, err, http.StatusInternalServerError)
 		return
 	}
 	api.staticLogger.Debugf("blocked hash %s", bs.Hash)
@@ -329,7 +329,7 @@ func (api *API) resolveHash(bp BlockPOST) (crypto.Hash, error) {
 	}
 
 	// resolve the skylink
-	skylink, err = api.staticSkydAPI.ResolveSkylink(skylink)
+	skylink, err = api.staticSkydClient.ResolveSkylink(skylink)
 	if err != nil {
 		return crypto.Hash{}, errors.AddContext(err, "failed to resolve skylink")
 	}
@@ -410,4 +410,9 @@ func parseListParameters(query url.Values) (int, int, int, error) {
 	}
 
 	return sort, offset, limit, nil
+}
+
+// WriteError wraps WriteError from the skyd node api
+func WriteError(w http.ResponseWriter, err error, code int) {
+	skyapi.WriteError(w, skyapi.Error{Message: err.Error()}, http.StatusBadRequest)
 }

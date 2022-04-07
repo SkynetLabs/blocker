@@ -24,30 +24,62 @@ const (
 // API defines the skyd API interface. It's an interface for testing purposes,
 // as this allows to easily mock it and alleviates the need for a skyd instance.
 type API interface {
-	// BlockHashes adds the given hashes to the block list.
-	BlockHashes([]string) error
+	// BlockHashes adds the given hashes to the block list. It returns which
+	// hashes were blocked, which hashes were invalid and potentially an error.
+	BlockHashes([]database.Hash) ([]database.Hash, []database.Hash, error)
 	// IsSkydUp returns true if the skyd API instance is up.
 	IsSkydUp() bool
 	// ResolveSkylink tries to resolve the given skylink to a V1 skylink.
 	ResolveSkylink(skymodules.Skylink) (skymodules.Skylink, error)
 }
 
-// api is a helper struct that exposes some methods that allow making skyd API
-// calls used by both the API and the blocker
-type api struct {
-	staticNginxHost string
-	staticNginxPort int
+type (
+	// api is a helper struct that exposes some methods that allow making skyd
+	// API calls used by both the API and the blocker
+	api struct {
+		staticSkydHost        string
+		staticSkydPort        int
+		staticSkydAPIPassword string
 
-	staticSkydHost        string
-	staticSkydPort        int
-	staticSkydAPIPassword string
+		staticDB     *database.DB
+		staticLogger *logrus.Logger
+	}
 
-	staticDB     *database.DB
-	staticLogger *logrus.Logger
+	// blockResponse is the response object returned by the Skyd API's block
+	// endpoint
+	blockResponse struct {
+		Invalids []invalidInput `json:"invalids"`
+	}
+
+	// invalidInput is a struct that wraps the invalid input along with an error
+	// string indicating why it was deemed invalid
+	invalidInput struct {
+		Input string `json:"input"`
+		Error string `json:"error"`
+	}
+)
+
+// InvalidHashes is a helper method that converts the list of invalid inputs to
+// an array of hashes.
+func (br *blockResponse) InvalidHashes() ([]database.Hash, error) {
+	if len(br.Invalids) == 0 {
+		return nil, nil
+	}
+
+	hashes := make([]database.Hash, len(br.Invalids))
+	for i, invalid := range br.Invalids {
+		var h database.Hash
+		err := h.LoadString(invalid.Input)
+		if err != nil {
+			return nil, err
+		}
+		hashes[i] = h
+	}
+	return hashes, nil
 }
 
 // NewAPI creates a new API instance.
-func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skydPort int, db *database.DB, logger *logrus.Logger) (API, error) {
+func NewAPI(skydHost, skydPassword string, skydPort int, db *database.DB, logger *logrus.Logger) (API, error) {
 	if db == nil {
 		return nil, errors.New("no DB provided")
 	}
@@ -56,9 +88,6 @@ func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skyd
 	}
 
 	return &api{
-		staticNginxHost: nginxHost,
-		staticNginxPort: nginxPort,
-
 		staticSkydHost:        skydHost,
 		staticSkydPort:        skydPort,
 		staticSkydAPIPassword: skydPassword,
@@ -68,44 +97,66 @@ func NewAPI(nginxHost string, nginxPort int, skydHost, skydPassword string, skyd
 	}, nil
 }
 
-// BlockSkylinks will perform an API call to skyd to block the given skylinks
-func (api *api) BlockHashes(hashes []string) error {
-	// Build the call to skyd.
-	reqBody := skyapi.SkynetBlocklistPOST{
-		Add:    hashes,
+// BlockHashes will perform an API call to skyd to block the given hashes. It
+// returns which hashes were blocked, which hashes were invalid and potentially
+// an error.
+func (api *api) BlockHashes(hashes []database.Hash) ([]database.Hash, []database.Hash, error) {
+	api.staticLogger.Debugf("blocking %v hashes", len(hashes))
+
+	// convert the hashes to strings
+	adds := make([]string, len(hashes))
+	for h, hash := range hashes {
+		adds[h] = hash.String()
+	}
+
+	// build the call to skyd.
+	reqBody, err := json.Marshal(skyapi.SkynetBlocklistPOST{
+		Add:    adds,
 		Remove: nil,
 		IsHash: true,
-	}
-	reqBodyBytes, err := json.Marshal(reqBody)
+	})
 	if err != nil {
-		return errors.AddContext(err, "failed to build request body")
+		return nil, nil, errors.AddContext(err, "failed to build request body")
 	}
 
-	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.staticNginxHost, api.staticNginxPort, skydTimeout)
-
-	api.staticLogger.Debugf("blockSkylinks: POST on %+s", url)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBodyBytes))
+	// execute the request
+	url := fmt.Sprintf("http://%s:%d/skynet/blocklist?timeout=%s", api.staticSkydHost, api.staticSkydPort, skydTimeout)
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewBuffer(reqBody))
 	if err != nil {
-		return errors.AddContext(err, "failed to build request to skyd")
+		return nil, nil, errors.AddContext(err, "failed to build request to skyd")
 	}
 	req.Header.Set("User-Agent", "Sia-Agent")
 	req.Header.Set("Authorization", api.staticAuthHeader())
-
-	api.staticLogger.Debugf("blockSkylinks: headers: %+v", req.Header)
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return errors.AddContext(err, "failed to make request to skyd")
+		return nil, nil, errors.AddContext(err, "failed to make request to skyd")
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusOK {
-		respBody, err := ioutil.ReadAll(resp.Body)
-		if err != nil {
-			api.staticLogger.Warn(errors.AddContext(err, "failed to parse response body after a failed call to skyd").Error())
-			respBody = []byte{}
-		}
-		return errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
+
+	// read the response body
+	respBody, err := ioutil.ReadAll(resp.Body)
+	if err != nil {
+		return nil, nil, errors.AddContext(err, "failed to parse response body after a failed call to skyd")
 	}
-	return nil
+
+	// if the request failed return an error containing the response body
+	if resp.StatusCode != http.StatusOK {
+		return nil, nil, errors.New(fmt.Sprintf("call to skyd failed with status '%s' and response '%s'", resp.Status, string(respBody)))
+	}
+
+	// unmarshal the response
+	var response blockResponse
+	err = json.Unmarshal(respBody, &response)
+	if err != nil {
+		return nil, nil, errors.AddContext(err, "failed to parse unmarshal skyd response")
+	}
+
+	invalids, err := response.InvalidHashes()
+	if err != nil {
+		return nil, nil, errors.AddContext(err, "failed to parse invalid hashes from skyd response")
+	}
+
+	return database.DiffHashes(hashes, invalids), invalids, nil
 }
 
 // ResolveSkylink will resolve the given skylink.

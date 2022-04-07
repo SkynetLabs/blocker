@@ -3,6 +3,7 @@ package database
 import (
 	"context"
 	"fmt"
+	"io/ioutil"
 	"strings"
 	"time"
 
@@ -23,6 +24,15 @@ const (
 
 	// mongoIndexCreateTimeout is the timeout used when creating indices
 	mongoIndexCreateTimeout = 10 * time.Minute
+
+	// mongoTestUsername is the username used for the test database.
+	mongoTestUsername = "admin"
+
+	// mongoTestPassword is the password used for the test database.
+	mongoTestPassword = "aO4tV5tC1oU3oQ7u"
+
+	// mongoTestConnString is the connection string used for the test database.
+	mongoTestConnString = "mongodb://localhost:37017"
 )
 
 var (
@@ -64,9 +74,6 @@ var (
 
 	// collAllowlist defines the name of the allowlist collection
 	collAllowlist = "allowlist"
-
-	// collLatestBlockTimestamps collLatestBlockTimestamps
-	collLatestBlockTimestamps = "latest_block_timestamps"
 )
 
 // DB holds a connection to the database, as well as helpful shortcuts to
@@ -74,7 +81,6 @@ var (
 //
 // NOTE: update the 'Purge' method when adding new collections
 type DB struct {
-	ctx             context.Context
 	staticClient    *mongo.Client
 	staticDB        *mongo.Database
 	staticAllowList *mongo.Collection
@@ -91,15 +97,11 @@ func New(ctx context.Context, uri string, creds options.Credential, logger *logr
 // name.
 func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.Credential, logger *logrus.Logger) (*DB, error) {
 	if ctx == nil {
-		return nil, errors.New("invalid context provided")
+		return nil, errors.New("no context provided")
 	}
 	if logger == nil {
-		return nil, errors.New("invalid logger provided")
+		return nil, errors.New("no logger provided")
 	}
-
-	// Define a new context with a timeout to handle the database setup.
-	dbCtx, cancel := context.WithTimeout(ctx, MongoDefaultTimeout)
-	defer cancel()
 
 	// Prepare the options for connecting to the db.
 	opts := options.Client().
@@ -116,14 +118,14 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to create a new db client")
 	}
-	err = c.Connect(dbCtx)
+	err = c.Connect(ctx)
 	if err != nil {
 		return nil, errors.AddContext(err, "failed to connect to db")
 	}
 
 	// Ensure the database schema
 	db := c.Database(dbName)
-	err = ensureDBSchema(dbCtx, db, logger)
+	err = ensureDBSchema(ctx, db, logger)
 	if err != nil && errors.Contains(err, ErrIndexCreateFailed) {
 		// We do not error out if we failed to ensure the existence of an index.
 		// It is definitely an issue that should be looked into, which is why we
@@ -136,7 +138,6 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 
 	// Define the database
 	cdb := &DB{
-		ctx:             ctx,
 		staticClient:    c,
 		staticDB:        db,
 		staticAllowList: db.Collection(collAllowlist),
@@ -147,18 +148,47 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 	return cdb, nil
 }
 
+// NewTestDB returns a test database, the database gets purged and on error we
+// panic.
+func NewTestDB(ctx context.Context, dbName string) *DB {
+	// create a discard logger
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
+
+	// create the database, we swap out slashes for underscores so callers can
+	// easily pass t.Name()
+	dbName = strings.Replace(dbName, "/", "_", -1)
+	db, err := NewCustomDB(ctx, mongoTestConnString, dbName, options.Credential{
+		Username: mongoTestUsername,
+		Password: mongoTestPassword,
+	}, logger)
+	if err != nil {
+		panic(err)
+	}
+
+	// create a context with timeout and purge the database
+	ctx, cancel := context.WithTimeout(ctx, MongoDefaultTimeout)
+	defer cancel()
+	err = db.Purge(ctx)
+	if err != nil {
+		panic(err)
+	}
+
+	return db
+}
+
 // BlockedHashes allows to pass a skip and limit parameter and returns an array
 // of blocked hashes alongside a boolean that indicates whether there's more
 // documents after the current 'page'.
-func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, error) {
+func (db *DB) BlockedHashes(ctx context.Context, sort, skip, limit int) ([]BlockedSkylink, bool, error) {
 	// configure the options
 	opts := options.Find()
 	opts.SetSkip(int64(skip))
 	opts.SetLimit(int64(limit + 1))
-	opts.SetSort(bson.D{{"timestamp_added", sort}})
+	opts.SetSort(bson.M{"timestamp_added": sort})
 
 	// fetch the documents
-	docs, err := db.find(db.ctx, bson.M{"invalid": bson.M{"$ne": true}}, opts)
+	docs, err := db.find(ctx, bson.M{"invalid": bson.M{"$ne": true}}, opts)
 	if err != nil {
 		return nil, false, err
 	}
@@ -173,22 +203,21 @@ func (db *DB) BlockedHashes(sort, skip, limit int) ([]BlockedSkylink, bool, erro
 }
 
 // Close disconnects the db.
-func (db *DB) Close() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
+func (db *DB) Close(ctx context.Context) error {
 	return db.staticClient.Disconnect(ctx)
 }
 
 // CreateBlockedSkylink creates a new skylink. If the skylink already exists it
-// does nothing.
+// returns ErrSkylinkExists.
 func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink) error {
-	// Ensure the hash is set
-	if skylink.Hash == (Hash{}) {
-		return errors.New("unexpected blocked skylink, 'hash' is not set")
+	// Ensure the given object has all required properties set
+	err := skylink.Validate()
+	if err != nil {
+		return errors.AddContext(err, "unexpected blocked skylink")
 	}
 
 	// Insert the skylink
-	_, err := db.staticSkylinks.InsertOne(ctx, skylink)
+	_, err = db.staticSkylinks.InsertOne(ctx, skylink)
 	if isDuplicateKey(err) {
 		return ErrSkylinkExists
 	}
@@ -199,10 +228,49 @@ func (db *DB) CreateBlockedSkylink(ctx context.Context, skylink *BlockedSkylink)
 	return nil
 }
 
+// CreateBlockedSkylinkBulk creates new blocked skylinks in bulk. It returns the
+// number of created entries.
+func (db *DB) CreateBlockedSkylinkBulk(ctx context.Context, skylinks []BlockedSkylink) (int, error) {
+	// Convenience variables
+	logger := db.staticLogger
+
+	// Ensure all required properties are set on the given blocked skylinks
+	for _, skylink := range skylinks {
+		err := skylink.Validate()
+		if err != nil {
+			return 0, errors.AddContext(err, "unexpected blocked skylink")
+		}
+	}
+
+	// Convert the given array to an interface array
+	docs := make([]interface{}, len(skylinks))
+	for i, doc := range skylinks {
+		docs[i] = doc
+	}
+
+	// Create insert options, we set ordered to false to ensure a single write
+	// failure doesn't prevent the other writes from going through. We need this
+	// because we expect duplicates and want to simply ignore them.
+	opts := options.InsertMany()
+	opts.SetOrdered(false)
+
+	// Insert all objects in the database
+	res, err := db.staticSkylinks.InsertMany(ctx, docs, opts)
+
+	// Handle the error, we want to ignore all duplicate key errors
+	err = ignoreDuplicateKeyErrors(err)
+	if err != nil {
+		logger.Debugf("CreateBlockedSkylinkBulk: mongodb error '%v'", err)
+		return 0, err
+	}
+
+	return len(res.InsertedIDs), nil
+}
+
 // CreateAllowListedSkylink creates a new allowlisted skylink. If the skylink
 // already exists it does nothing and returns without failure.
 func (db *DB) CreateAllowListedSkylink(ctx context.Context, skylink *AllowListedSkylink) error {
-	// Insert the skylink
+	// insert the skylink
 	_, err := db.staticAllowList.InsertOne(ctx, skylink)
 	if err != nil && !isDuplicateKey(err) {
 		return err
@@ -228,15 +296,40 @@ func (db *DB) IsAllowListed(ctx context.Context, hash crypto.Hash) (bool, error)
 	return true, nil
 }
 
-// MarkAsSucceeded will toggle the failed flag for all documents in the given
-// list of hashes that are currently marked as failed.
-func (db *DB) MarkAsSucceeded(hashes []Hash) error {
-	return db.updateFailedFlag(hashes, false)
+// MarkFailed will mark the given documents as failed
+func (db *DB) MarkFailed(ctx context.Context, hashes []Hash) error {
+	return db.updateFailedFlag(ctx, hashes, true)
 }
 
-// MarkAsFailed will mark the given documents as failed
-func (db *DB) MarkAsFailed(hashes []Hash) error {
-	return db.updateFailedFlag(hashes, true)
+// MarkInvalid will mark the given documents as invalid
+func (db *DB) MarkInvalid(ctx context.Context, hashes []Hash) error {
+	// return early if no hashes were given
+	if len(hashes) == 0 {
+		return nil
+	}
+
+	// create the filter
+	filter := bson.M{
+		"hash": bson.M{"$in": hashes},
+	}
+
+	// define the update
+	update := bson.M{
+		"$set": bson.M{
+			"invalid": True,
+		},
+	}
+
+	// perform the update
+	collSkylinks := db.staticDB.Collection(collSkylinks)
+	_, err := collSkylinks.UpdateMany(ctx, filter, update)
+	return err
+}
+
+// MarkSucceeded will toggle the failed flag for all documents in the given
+// list of hashes that are currently marked as failed.
+func (db *DB) MarkSucceeded(ctx context.Context, hashes []Hash) error {
+	return db.updateFailedFlag(ctx, hashes, false)
 }
 
 // Ping sends a ping command to verify that the client can connect to the DB and
@@ -261,29 +354,19 @@ func (db *DB) Purge(ctx context.Context) error {
 	return nil
 }
 
-// HashesToBlock sweeps the database for unblocked hashes. It uses the latest
-// block timestamp for this server which is retrieves from the DB. It scans all
-// blocked skylinks from the hour before that timestamp, too, in order to
-// protect against system clock float.
-func (db *DB) HashesToBlock() ([]Hash, error) {
-	cutoff, err := db.LatestBlockTimestamp()
-	if err != nil {
-		return nil, errors.AddContext(err, "failed to fetch the latest timestamp from the DB")
-	}
-	// Push cutoff one hour into the past in order to compensate of any
-	// potential system time drift.
-	cutoff = cutoff.Add(-time.Hour)
-	db.staticLogger.Tracef("HashesToBlock: fetching all hashes added after cutoff of %s", cutoff.String())
-
+// HashesToBlock sweeps the database for unblocked hashes after the given
+// timestamp.
+func (db *DB) HashesToBlock(ctx context.Context, from time.Time) ([]Hash, error) {
+	// NOTE: $ne: true is not the same as $eq: false
 	filter := bson.M{
-		"timestamp_added": bson.M{"$gt": cutoff},
+		"timestamp_added": bson.M{"$gte": from},
 		"failed":          bson.M{"$ne": true},
+		"invalid":         bson.M{"$ne": true},
 	}
 	opts := options.Find()
-	opts.SetSort(bson.D{{"timestamp_added", 1}})
-	opts.SetProjection(bson.D{{"hash", 1}})
+	opts.SetProjection(bson.M{"hash": 1})
 
-	docs, err := db.find(db.ctx, filter, opts)
+	docs, err := db.find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -300,13 +383,16 @@ func (db *DB) HashesToBlock() ([]Hash, error) {
 // around. This is a retry mechanism to ensure we keep retrying to block those
 // hashes, but at the same try 'unblock' the main block loop in order for it
 // to run smoothly.
-func (db *DB) HashesToRetry() ([]Hash, error) {
-	filter := bson.M{"failed": bson.M{"$eq": true}}
+func (db *DB) HashesToRetry(ctx context.Context) ([]Hash, error) {
+	// NOTE: $ne: true is not the same as $eq: false
+	filter := bson.M{
+		"failed":  bson.M{"$eq": true},
+		"invalid": bson.M{"$ne": true},
+	}
 	opts := options.Find()
-	opts.SetSort(bson.D{{"timestamp_added", 1}})
-	opts.SetProjection(bson.D{{"hash", 1}})
+	opts.SetProjection(bson.M{"hash": 1})
 
-	docs, err := db.find(db.ctx, filter, opts)
+	docs, err := db.find(ctx, filter, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -317,44 +403,6 @@ func (db *DB) HashesToRetry() ([]Hash, error) {
 		hashes[i] = doc.Hash
 	}
 	return hashes, nil
-}
-
-// LatestBlockTimestamp returns the timestamp (timestampAdded) of the latest
-// skylink that was blocked. When fetching new SkylinksToBlock we should start
-// from that timestamp (and one hour before that).
-func (db *DB) LatestBlockTimestamp() (time.Time, error) {
-	sr := db.staticDB.Collection(collLatestBlockTimestamps).FindOne(db.ctx, bson.M{"server_name": ServerUID})
-	if sr.Err() != nil && sr.Err() != mongo.ErrNoDocuments {
-		return time.Time{}, sr.Err()
-	}
-	if sr.Err() == mongo.ErrNoDocuments {
-		return time.Time{}, nil
-	}
-	var payload struct {
-		LatestBlock time.Time `bson:"latest_block"`
-	}
-	err := sr.Decode(&payload)
-	if err != nil {
-		return time.Time{}, errors.AddContext(err, "failed to deserialize the value from the DB")
-	}
-	return payload.LatestBlock, nil
-}
-
-// SetLatestBlockTimestamp sets the timestamp (timestampAdded) of the latest
-// skylink that was blocked. When fetching new SkylinksToBlock we should start
-// from that timestamp (and one hour before that).
-func (db *DB) SetLatestBlockTimestamp(t time.Time) error {
-	filter := bson.M{"server_name": ServerUID}
-	value := bson.M{"$set": bson.M{"server_name": ServerUID, "latest_block": t}}
-	opts := options.UpdateOptions{Upsert: &True}
-	ur, err := db.staticDB.Collection(collLatestBlockTimestamps).UpdateOne(db.ctx, filter, value, &opts)
-	if err != nil {
-		return errors.AddContext(err, "failed to update")
-	}
-	if ur.ModifiedCount+ur.UpsertedCount == 0 {
-		return ErrNoEntriesUpdated
-	}
-	return nil
 }
 
 // find wraps the `Find` function on the Skylinks collection and returns an
@@ -370,7 +418,7 @@ func (db *DB) find(ctx context.Context, filter interface{},
 	}
 
 	list := make([]BlockedSkylink, 0)
-	err = c.All(db.ctx, &list)
+	err = c.All(ctx, &list)
 	if err != nil {
 		return nil, err
 	}
@@ -399,7 +447,7 @@ func (db *DB) findOne(ctx context.Context, filter interface{},
 
 // updateFailedFlag is a helper method that updates the failed flag on the
 // documents that correspond with the skylinks in the given array.
-func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
+func (db *DB) updateFailedFlag(ctx context.Context, hashes []Hash, failed bool) error {
 	// return early if no hashes were given
 	if len(hashes) == 0 {
 		return nil
@@ -409,6 +457,11 @@ func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
 	filter := bson.M{
 		"hash":   bson.M{"$in": hashes},
 		"failed": bson.M{"$eq": !failed},
+
+		// just to be on the safe side we ensure we never update invalid
+		// documents, the filters that fetch documents do this as well so this
+		// is only here to keep the database as clean as possible
+		"invalid": bson.M{"$eq": false},
 	}
 
 	// define the update
@@ -420,8 +473,35 @@ func (db *DB) updateFailedFlag(hashes []Hash, failed bool) error {
 
 	// perform the update
 	collSkylinks := db.staticDB.Collection(collSkylinks)
-	_, err := collSkylinks.UpdateMany(db.ctx, filter, update)
+	_, err := collSkylinks.UpdateMany(ctx, filter, update)
 	return err
+}
+
+// ignoreDuplicateKeyErrors takes an error, if that error is a mongo
+// BulkWriteException, it will loop through the write errors and ignore
+// duplicate key errors. If all write errors were duplicate key errors, this
+// function returns nil, otherwise it simply returns the given error.
+func ignoreDuplicateKeyErrors(err error) error {
+	if err == nil {
+		return nil
+	}
+
+	// check whether the given error is a BulkWriteException, if it's not simply
+	// return the error
+	bWriteErr, ok := err.(mongo.BulkWriteException)
+	if !ok {
+		return err
+	}
+
+	// loop over all write errors, ignore the duplicate key errors, if all write
+	// errors are duplicate key errors we want to ignore the bulk write error
+	// all together
+	for _, bWriteError := range bWriteErr.WriteErrors {
+		if !isDuplicateKey(bWriteError) {
+			return err
+		}
+	}
+	return nil
 }
 
 // ensureDBSchema checks that we have all collections and indexes we need and
@@ -434,32 +514,30 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	schema := map[string][]mongo.IndexModel{
 		collAllowlist: {
 			{
-				Keys:    bson.D{{"hash", 1}},
+				Keys:    bson.M{"hash": 1},
 				Options: options.Index().SetName("hash").SetUnique(true),
 			},
 			{
-				Keys:    bson.D{{"timestamp_added", 1}},
+				Keys:    bson.M{"timestamp_added": 1},
 				Options: options.Index().SetName("timestamp_added"),
 			},
 		},
 		collSkylinks: {
 			{
-				Keys:    bson.D{{"hash", 1}},
+				Keys:    bson.M{"hash": 1},
 				Options: options.Index().SetName("hash").SetUnique(true),
 			},
 			{
-				Keys:    bson.D{{"timestamp_added", 1}},
+				Keys:    bson.M{"timestamp_added": 1},
 				Options: options.Index().SetName("timestamp_added"),
 			},
 			{
-				Keys:    bson.D{{"failed", 1}},
+				Keys:    bson.M{"failed": 1},
 				Options: options.Index().SetName("failed"),
 			},
-		},
-		collLatestBlockTimestamps: {
 			{
-				Keys:    bson.D{{"server_name", 1}},
-				Options: options.Index().SetName("server_name").SetUnique(true),
+				Keys:    bson.M{"invalid": 1},
+				Options: options.Index().SetName("invalid"),
 			},
 		},
 	}
