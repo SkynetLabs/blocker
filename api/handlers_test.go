@@ -197,7 +197,7 @@ func testHandleBlockRequest(t *testing.T, server *httptest.Server) {
 	// call the request handler
 	w.Reset()
 	api.handleBlockRequest(context.Background(), w, bp, "")
-	return
+
 	// assert the handler writes a 'reported' status response
 	err = json.Unmarshal(w.staticBuffer.Bytes(), &resp)
 	if err != nil {
