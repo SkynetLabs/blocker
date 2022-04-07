@@ -51,10 +51,12 @@ func TestDatabase(t *testing.T) {
 		name string
 		test func(t *testing.T)
 	}{
+		
 		{
-			name: "Ping",
-			test: testPing,
+			name: "BlockedHashes",
+			test: testBlockedHashes,
 		},
+
 		{
 			name: "CreateBlockedSkylink",
 			test: testCreateBlockedSkylink,
@@ -83,38 +85,30 @@ func TestDatabase(t *testing.T) {
 			name: "MarkInvalid",
 			test: testMarkInvalid,
 		},
+		{
+			name: "Ping",
+			test: testPing,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, test.test)
 	}
 }
 
-// testPing is a unit test for the database's Ping method.
-func testPing(t *testing.T) {
+// testBlockedHashes tests fetching blocked hashes from the database
+func testBlockedHashes(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
 	db := newTestDB(t.Name())
-
-	// ping should succeed
-	err := db.Ping(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// close it
-	err = db.Close(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// ping should fail
-	err = db.Ping(ctx)
-	if err == nil {
-		t.Fatal("should fail")
-	}
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 }
 
 // testCreateBlockedSkylink tests creating and fetching a blocked skylink from
@@ -570,6 +564,35 @@ func testMarkInvalid(t *testing.T) {
 	}
 	if len(toBlock) != 0 {
 		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
+	}
+}
+
+
+// testPing is a unit test for the database's Ping method.
+func testPing(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := newTestDB(t.Name())
+
+	// ping should succeed
+	err := db.Ping(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// close it
+	err = db.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ping should fail
+	err = db.Ping(ctx)
+	if err == nil {
+		t.Fatal("should fail")
 	}
 }
 
