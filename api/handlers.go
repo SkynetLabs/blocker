@@ -41,6 +41,12 @@ const (
 	sortDescending = "desc"
 )
 
+var (
+	// errResolve is the error returned when we failed to resolve a skylink,
+	// indicating skyd failure
+	errResolve = errors.New("failed to resolve skylink")
+)
+
 type (
 	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
@@ -254,7 +260,13 @@ func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, b
 	// Resolve the post body into a hash
 	hash, err := api.resolveHash(bp)
 	if err != nil {
-		WriteError(w, errors.AddContext(err, "failed to resolve hash"), http.StatusBadRequest)
+		// return an internal server error if the resolve failed due to skyd
+		// either being down or behaving unexpectedly
+		code := http.StatusBadRequest
+		if errors.Contains(err, errResolve) {
+			code = http.StatusInternalServerError
+		}
+		WriteError(w, errors.AddContext(err, "failed to resolve hash"), code)
 		return
 	}
 
@@ -331,12 +343,12 @@ func (api *API) resolveHash(bp BlockPOST) (crypto.Hash, error) {
 	// resolve the skylink
 	skylink, err = api.staticSkydClient.ResolveSkylink(skylink)
 	if err != nil {
-		return crypto.Hash{}, errors.AddContext(err, "failed to resolve skylink")
+		return crypto.Hash{}, errors.Compose(err, errResolve)
 	}
 
 	// sanity check the skylink is a v1 skylink
 	if !skylink.IsSkylinkV1() {
-		return crypto.Hash{}, errors.AddContext(err, "failed to resolve skylink")
+		return crypto.Hash{}, errors.Compose(err, errResolve)
 	}
 
 	// return the hash
@@ -414,5 +426,5 @@ func parseListParameters(query url.Values) (int, int, int, error) {
 
 // WriteError wraps WriteError from the skyd node api
 func WriteError(w http.ResponseWriter, err error, code int) {
-	skyapi.WriteError(w, skyapi.Error{Message: err.Error()}, http.StatusBadRequest)
+	skyapi.WriteError(w, skyapi.Error{Message: err.Error()}, code)
 }

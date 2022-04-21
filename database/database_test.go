@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"gitlab.com/NebulousLabs/errors"
 	"gitlab.com/SkynetLabs/skyd/skymodules"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -416,25 +417,28 @@ func testMarkFailed(t *testing.T) {
 	}
 
 	// insert two regular documents and one invalid one
-	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+	err1 := db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash:           HashBytes([]byte("skylink_1")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
-	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+	err2 := db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash:           HashBytes([]byte("skylink_2")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 	})
-	db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+	err3 := db.CreateBlockedSkylink(ctx, &BlockedSkylink{
 		Hash:           HashBytes([]byte("skylink_3")),
 		Reporter:       Reporter{},
 		Tags:           []string{"tag_1"},
 		TimestampAdded: time.Now().UTC(),
 		Invalid:        true,
 	})
+	if err := errors.Compose(err1, err2, err3); err != nil {
+		t.Fatal(err)
+	}
 
 	// fetch a cursor that holds all docs
 	c, err := db.staticDB.Collection(collSkylinks).Find(ctx, bson.M{})

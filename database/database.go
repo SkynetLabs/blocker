@@ -20,10 +20,10 @@ import (
 const (
 	// MongoDefaultTimeout is the timeout for the context used in testing
 	// whenever a context is sent to mongo
-	MongoDefaultTimeout = 10 * time.Minute
+	MongoDefaultTimeout = time.Minute
 
 	// mongoIndexCreateTimeout is the timeout used when creating indices
-	mongoIndexCreateTimeout = 10 * time.Minute
+	mongoIndexCreateTimeout = time.Minute
 
 	// mongoTestUsername is the username used for the test database.
 	mongoTestUsername = "admin"
