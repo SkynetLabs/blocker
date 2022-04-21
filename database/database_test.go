@@ -28,10 +28,12 @@ func TestDatabase(t *testing.T) {
 		name string
 		test func(t *testing.T)
 	}{
+
 		{
-			name: "Ping",
-			test: testPing,
+			name: "BlockedHashes",
+			test: testBlockedHashes,
 		},
+
 		{
 			name: "CreateBlockedSkylink",
 			test: testCreateBlockedSkylink,
@@ -68,37 +70,59 @@ func TestDatabase(t *testing.T) {
 			name: "DropIndex",
 			test: testDropIndex,
 		},
+		{
+			name: "Ping",
+			test: testPing,
+		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, test.test)
 	}
 }
 
-// testPing is a unit test for the database's Ping method.
-func testPing(t *testing.T) {
+// testBlockedHashes tests fetching blocked hashes from the database
+func testBlockedHashes(t *testing.T) {
 	// create context
 	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
 	defer cancel()
 
 	// create test database
 	db := NewTestDB(ctx, t.Name())
+	defer func() {
+		err := db.Close(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}()
 
-	// ping should succeed
-	err := db.Ping(ctx)
+	// assert there's no hash that needs to be blocked
+	toBlock, err := db.HashesToBlock(ctx, time.Time{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(toBlock) != 0 {
+		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
+	}
+
+	// insert a regular document
+	hash := HashBytes([]byte("skylink_1"))
+	err = db.CreateBlockedSkylink(ctx, &BlockedSkylink{
+		Hash:           hash,
+		Reporter:       Reporter{},
+		Tags:           []string{"tag_1"},
+		TimestampAdded: time.Now().UTC(),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	// close it
-	err = db.Close(ctx)
+	// assert there's one hash that needs to be blocked
+	toBlock, err = db.HashesToBlock(ctx, time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
-
-	// ping should fail
-	err = db.Ping(ctx)
-	if err == nil {
-		t.Fatal("should fail")
+	if len(toBlock) != 1 {
+		t.Fatalf("expected 1 hash, instead it was %v", len(toBlock))
 	}
 }
 
@@ -632,6 +656,34 @@ func testMarkInvalid(t *testing.T) {
 	}
 	if len(toBlock) != 0 {
 		t.Fatalf("expected 0 hashes, instead it was %v", len(toBlock))
+	}
+}
+
+// testPing is a unit test for the database's Ping method.
+func testPing(t *testing.T) {
+	// create context
+	ctx, cancel := context.WithTimeout(context.Background(), MongoDefaultTimeout)
+	defer cancel()
+
+	// create test database
+	db := NewTestDB(ctx, t.Name())
+
+	// ping should succeed
+	err := db.Ping(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// close it
+	err = db.Close(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// ping should fail
+	err = db.Ping(ctx)
+	if err == nil {
+		t.Fatal("should fail")
 	}
 }
 

@@ -253,11 +253,14 @@ func (bl *Blocker) managedBlock() error {
 	ctx, cancel := context.WithTimeout(context.Background(), database.MongoDefaultTimeout)
 	defer cancel()
 
+	bl.staticLogger.Debugf("managedBlock blocking hashes from %v", from)
+
 	// Fetch hashes to block
 	hashes, err := bl.staticDB.HashesToBlock(ctx, from)
 	if err != nil {
 		return err
 	}
+	bl.staticLogger.Debugf("managedBlock found %d hashes", len(hashes))
 	if len(hashes) == 0 {
 		return nil
 	}

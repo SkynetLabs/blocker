@@ -188,7 +188,10 @@ func (db *DB) BlockedHashes(ctx context.Context, sort, skip, limit int) ([]Block
 	opts.SetSort(bson.M{"timestamp_added": sort})
 
 	// fetch the documents
-	docs, err := db.find(ctx, bson.M{"invalid": bson.M{"$ne": true}}, opts)
+	docs, err := db.find(ctx, bson.M{
+		"invalid": bson.M{"$ne": true},
+		"hash":    bson.M{"$exists": true},
+	}, opts)
 	if err != nil {
 		return nil, false, err
 	}
