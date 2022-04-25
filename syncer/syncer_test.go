@@ -191,7 +191,7 @@ func newTestSyncer(dbName string, portalURLs []string) (*Syncer, error) {
 	defer cancel()
 
 	// create database
-	db := database.NewTestDB(ctx, dbName, logger)
+	db := database.NewTestDB(ctx, dbName)
 
 	// create a syncer
 	return New(db, portalURLs, logger)

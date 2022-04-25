@@ -26,12 +26,12 @@ func newAPITester(api *API) *apiTester {
 
 // newTestAPI returns a new API instance
 func newTestAPI(dbName string, client *SkydClient) (*API, error) {
+	// create database
+	db := database.NewTestDB(context.Background(), dbName)
+
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
-
-	// create database
-	db := database.NewTestDB(context.Background(), dbName, logger)
 
 	// create the API
 	api, err := New(client, db, logger)

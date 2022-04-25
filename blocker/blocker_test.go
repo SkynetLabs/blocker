@@ -127,12 +127,12 @@ func testBlockHashes(t *testing.T, server *httptest.Server) {
 
 // newTestBlocker returns a new blocker instance
 func newTestBlocker(ctx context.Context, dbName string, skydClient *api.SkydClient) (*Blocker, error) {
+	// create database
+	db := database.NewTestDB(context.Background(), dbName)
+
 	// create a nil logger
 	logger := logrus.New()
 	logger.Out = ioutil.Discard
-
-	// create database
-	db := database.NewTestDB(context.Background(), dbName, logger)
 
 	// create the blocker
 	blocker, err := New(skydClient, db, logger)

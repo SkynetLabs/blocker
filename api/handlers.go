@@ -41,12 +41,27 @@ const (
 	sortDescending = "desc"
 )
 
+var (
+	// errResolve is the error returned when we failed to resolve a skylink,
+	// indicating skyd failure
+	errResolve = errors.New("failed to resolve skylink")
+)
+
 type (
 	// BlockPOST describes a request to the /block endpoint.
 	BlockPOST struct {
 		Skylink  skylink  `json:"skylink"`
 		Reporter Reporter `json:"reporter"`
 		Tags     []string `json:"tags"`
+
+		// Hash represents the hash of the Skylink's merkle root. Either 'hash'
+		// or 'skylink' must be set. If both are set the Skylink's hash value
+		// must correspond with the hash.
+		//
+		// It is encouraged to use this field when possible as it allows
+		// services that interact with the blocker to only deal with hashes
+		// instead of skylinks.
+		Hash crypto.Hash `json:"hash"`
 	}
 
 	// BlocklistGET returns a list of blocked hashes
@@ -128,13 +143,13 @@ func (api *API) blocklistGET(w http.ResponseWriter, r *http.Request, _ httproute
 	// parse offset and limit parameters
 	sort, offset, limit, err := parseListParameters(r.URL.Query())
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
 	blocked, more, err := api.staticDB.BlockedHashes(r.Context(), sort, offset, limit)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
+		WriteError(w, err, http.StatusInternalServerError)
 		return
 	}
 
@@ -181,7 +196,7 @@ func (api *API) blockPOST(w http.ResponseWriter, r *http.Request, _ httprouter.P
 	var body BlockPOST
 	err := json.NewDecoder(b).Decode(&body)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -213,7 +228,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	var body BlockWithPoWPOST
 	err := json.NewDecoder(b).Decode(&body)
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -223,7 +238,7 @@ func (api *API) blockWithPoWPOST(w http.ResponseWriter, r *http.Request, _ httpr
 	// Verify the pow.
 	err = body.PoW.Verify()
 	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusBadRequest)
+		WriteError(w, err, http.StatusBadRequest)
 		return
 	}
 
@@ -242,84 +257,111 @@ func (api *API) blockWithPoWGET(w http.ResponseWriter, r *http.Request, _ httpro
 // block handlers. It executes all code which is shared between the two
 // handlers.
 func (api *API) handleBlockRequest(ctx context.Context, w http.ResponseWriter, bp BlockPOST, sub string) {
-	// Decode the skylink, we can safely ignore the error here as LoadString
-	// will have been called by the JSON decoder
-	var skylink skymodules.Skylink
-	_ = skylink.LoadString(string(bp.Skylink))
-
-	// Resolve the skylink
-	resolved, err := api.staticSkydClient.ResolveSkylink(skylink)
-	if err == nil {
-		// replace the skylink with the resolved skylink
-		skylink = resolved
-	} else {
-		// in case of an error we log and continue with the given skylink
-		api.staticLogger.Errorf("failed to resolve skylink '%v', err: %v", skylink, err)
-	}
-
-	// Sanity check the skylink is a v1 skylink
-	if !skylink.IsSkylinkV1() {
-		skyapi.WriteError(w, skyapi.Error{"failed to resolve skylink"}, http.StatusInternalServerError)
+	// Resolve the post body into a hash
+	hash, err := api.resolveHash(bp)
+	if err != nil {
+		// return an internal server error if the resolve failed due to skyd
+		// either being down or behaving unexpectedly
+		code := http.StatusBadRequest
+		if errors.Contains(err, errResolve) {
+			code = http.StatusInternalServerError
+		}
+		WriteError(w, errors.AddContext(err, "failed to resolve hash"), code)
 		return
 	}
 
 	// Check whether the skylink is on the allow list
-	if api.isAllowListed(ctx, skylink) {
+	if api.isAllowListed(ctx, hash) {
 		skyapi.WriteJSON(w, statusResponse{"reported"})
 		return
 	}
 
-	// Block the link.
-	err = api.block(ctx, bp, skylink, sub, sub == "")
-	if errors.Contains(err, database.ErrSkylinkExists) {
-		skyapi.WriteJSON(w, statusResponse{"duplicate"})
-		return
-	}
-	if err != nil {
-		skyapi.WriteError(w, skyapi.Error{err.Error()}, http.StatusInternalServerError)
-		return
-	}
-	skyapi.WriteJSON(w, statusResponse{"reported"})
-}
-
-// block blocks a skylink
-func (api *API) block(ctx context.Context, bp BlockPOST, skylink skymodules.Skylink, sub string, unauthenticated bool) error {
-	// TODO: currently we still set the Skylink, as soon as this module is
-	// converted to work fully with hashes, the Skylink field needs to be
-	// dropped.
+	// Create a blocked skylink object
 	bs := &database.BlockedSkylink{
-		Skylink: skylink.String(),
-		Hash:    database.NewHash(skylink),
+		Hash: database.Hash{Hash: hash},
 		Reporter: database.Reporter{
 			Name:            bp.Reporter.Name,
 			Email:           bp.Reporter.Email,
 			OtherContact:    bp.Reporter.OtherContact,
 			Sub:             sub,
-			Unauthenticated: unauthenticated,
+			Unauthenticated: sub == "",
 		},
 		Tags:           bp.Tags,
 		TimestampAdded: time.Now().UTC(),
 	}
+
+	// Block the link.
 	api.staticLogger.Debugf("blocking hash %s", bs.Hash)
-	err := api.staticDB.CreateBlockedSkylink(ctx, bs)
+	err = api.staticDB.CreateBlockedSkylink(ctx, bs)
+	if errors.Contains(err, database.ErrSkylinkExists) {
+		skyapi.WriteJSON(w, statusResponse{"duplicate"})
+		return
+	}
 	if err != nil {
-		return err
+		WriteError(w, err, http.StatusInternalServerError)
+		return
 	}
 	api.staticLogger.Debugf("blocked hash %s", bs.Hash)
-	return nil
+	skyapi.WriteJSON(w, statusResponse{"reported"})
 }
 
 // isAllowListed returns true if the given skylink is on the allow list
 //
 // NOTE: the given skylink is expected to be a v1 skylink, meaning the caller of
 // this function should have tried to resolve the skylink beforehand
-func (api *API) isAllowListed(ctx context.Context, skylink skymodules.Skylink) bool {
-	allowlisted, err := api.staticDB.IsAllowListed(ctx, skylink.String())
+func (api *API) isAllowListed(ctx context.Context, hash crypto.Hash) bool {
+	allowlisted, err := api.staticDB.IsAllowListed(ctx, hash)
 	if err != nil {
 		api.staticLogger.Error("failed to verify skylink against the allow list", err)
 		return false
 	}
 	return allowlisted
+}
+
+// resolveHash resolves the given block post object into a hash. If a hash was
+// already given, it will simply return that. If a skylink was given, it will
+// try to resolve it first if necessary and return the hash of the v1 skylink.
+func (api *API) resolveHash(bp BlockPOST) (crypto.Hash, error) {
+	// validate the block post
+	err := bp.validate()
+	if err != nil {
+		return crypto.Hash{}, err
+	}
+
+	// if the hash is set, we are done
+	if bp.Hash != (crypto.Hash{}) {
+		return bp.Hash, nil
+	}
+
+	// decode the skylink
+	var skylink skymodules.Skylink
+	err = skylink.LoadString(string(bp.Skylink))
+	if err != nil {
+		return crypto.Hash{}, errors.AddContext(err, "failed to load skylink")
+	}
+
+	// resolve the skylink
+	skylink, err = api.staticSkydClient.ResolveSkylink(skylink)
+	if err != nil {
+		return crypto.Hash{}, errors.Compose(err, errResolve)
+	}
+
+	// sanity check the skylink is a v1 skylink
+	if !skylink.IsSkylinkV1() {
+		return crypto.Hash{}, errors.Compose(err, errResolve)
+	}
+
+	// return the hash
+	return crypto.HashObject(skylink.MerkleRoot()), nil
+}
+
+// validate returns an error if the block post object does not contain a hash or
+// skylink
+func (bp *BlockPOST) validate() error {
+	if bp.Hash == (crypto.Hash{}) && bp.Skylink == "" {
+		return errors.New("hash or skylink is required")
+	}
+	return nil
 }
 
 // extractSkylinkHash extracts the skylink hash from the given skylink that
@@ -380,4 +422,9 @@ func parseListParameters(query url.Values) (int, int, int, error) {
 	}
 
 	return sort, offset, limit, nil
+}
+
+// WriteError wraps WriteError from the skyd node api
+func WriteError(w http.ResponseWriter, err error, code int) {
+	skyapi.WriteError(w, skyapi.Error{Message: err.Error()}, code)
 }

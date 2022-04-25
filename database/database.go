@@ -14,6 +14,7 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.mongodb.org/mongo-driver/mongo/readpref"
 	"go.mongodb.org/mongo-driver/mongo/writeconcern"
+	"go.sia.tech/siad/crypto"
 )
 
 const (
@@ -22,7 +23,7 @@ const (
 	MongoDefaultTimeout = time.Minute
 
 	// mongoIndexCreateTimeout is the timeout used when creating indices
-	mongoIndexCreateTimeout = 10 * time.Second
+	mongoIndexCreateTimeout = time.Minute
 
 	// mongoTestUsername is the username used for the test database.
 	mongoTestUsername = "admin"
@@ -42,6 +43,10 @@ var (
 	// ErrIndexCreateFailed is returned when an error occurred when trying to
 	// ensure an index
 	ErrIndexCreateFailed = errors.New("failed to create index")
+
+	// ErrIndexDropFailed is returned when an error occurred when trying to
+	// drop an index
+	ErrIndexDropFailed = errors.New("failed to drop an index")
 
 	// ErrNoDocumentsFound is returned when a database operation completes
 	// successfully but it doesn't find or affect any documents.
@@ -145,12 +150,10 @@ func NewCustomDB(ctx context.Context, uri string, dbName string, creds options.C
 
 // NewTestDB returns a test database, the database gets purged and on error we
 // panic.
-func NewTestDB(ctx context.Context, dbName string, logger *logrus.Logger) *DB {
-	// create a discard logger if the caller did not pass one
-	if logger == nil {
-		logger = logrus.New()
-		logger.Out = ioutil.Discard
-	}
+func NewTestDB(ctx context.Context, dbName string) *DB {
+	// create a discard logger
+	logger := logrus.New()
+	logger.Out = ioutil.Discard
 
 	// create the database, we swap out slashes for underscores so callers can
 	// easily pass t.Name()
@@ -182,7 +185,7 @@ func (db *DB) BlockedHashes(ctx context.Context, sort, skip, limit int) ([]Block
 	opts := options.Find()
 	opts.SetSkip(int64(skip))
 	opts.SetLimit(int64(limit + 1))
-	opts.SetSort(bson.D{{"timestamp_added", sort}})
+	opts.SetSort(bson.M{"timestamp_added": sort})
 
 	// fetch the documents
 	docs, err := db.find(ctx, bson.M{
@@ -285,8 +288,8 @@ func (db *DB) FindByHash(ctx context.Context, hash Hash) (*BlockedSkylink, error
 }
 
 // IsAllowListed returns whether the given skylink is on the allow list.
-func (db *DB) IsAllowListed(ctx context.Context, skylink string) (bool, error) {
-	res := db.staticAllowList.FindOne(ctx, bson.M{"skylink": skylink})
+func (db *DB) IsAllowListed(ctx context.Context, hash crypto.Hash) (bool, error) {
+	res := db.staticAllowList.FindOne(ctx, bson.M{"hash": hash.String()})
 	if isDocumentNotFound(res.Err()) {
 		return false, nil
 	}
@@ -364,7 +367,7 @@ func (db *DB) HashesToBlock(ctx context.Context, from time.Time) ([]Hash, error)
 		"invalid":         bson.M{"$ne": true},
 	}
 	opts := options.Find()
-	opts.SetProjection(bson.D{{"hash", 1}})
+	opts.SetProjection(bson.M{"hash": 1})
 
 	docs, err := db.find(ctx, filter, opts)
 	if err != nil {
@@ -390,7 +393,7 @@ func (db *DB) HashesToRetry(ctx context.Context) ([]Hash, error) {
 		"invalid": bson.M{"$ne": true},
 	}
 	opts := options.Find()
-	opts.SetProjection(bson.D{{"hash", 1}})
+	opts.SetProjection(bson.M{"hash": 1})
 
 	docs, err := db.find(ctx, filter, opts)
 	if err != nil {
@@ -514,37 +517,41 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 	schema := map[string][]mongo.IndexModel{
 		collAllowlist: {
 			{
-				Keys:    bson.D{{"skylink", 1}},
-				Options: options.Index().SetName("skylink").SetUnique(true),
+				Keys:    bson.M{"hash": 1},
+				Options: options.Index().SetName("hash").SetUnique(true),
 			},
 			{
-				Keys:    bson.D{{"timestamp_added", 1}},
+				Keys:    bson.M{"timestamp_added": 1},
 				Options: options.Index().SetName("timestamp_added"),
 			},
 		},
 		collSkylinks: {
 			{
-				Keys:    bson.D{{"hash", 1}},
+				Keys:    bson.M{"hash": 1},
 				Options: options.Index().SetName("hash").SetUnique(true),
 			},
 			{
-				Keys:    bson.D{{"timestamp_added", 1}},
+				Keys:    bson.M{"timestamp_added": 1},
 				Options: options.Index().SetName("timestamp_added"),
 			},
 			{
-				Keys:    bson.D{{"failed", 1}},
+				Keys:    bson.M{"failed": 1},
 				Options: options.Index().SetName("failed"),
 			},
 			{
-				Keys:    bson.D{{"invalid", 1}},
+				Keys:    bson.M{"invalid": 1},
 				Options: options.Index().SetName("invalid"),
 			},
 		},
 	}
 
-	icOpts := options.CreateIndexes().SetMaxTime(mongoIndexCreateTimeout)
+	// build the options
+	opts := options.CreateIndexes()
+	opts.SetMaxTime(mongoIndexCreateTimeout)
+	opts.SetCommitQuorumString("majority") // defaults to all
 
-	var icErr error
+	// ensure all collections and indices exist
+	var createErr error
 	for collName, models := range schema {
 		coll, err := ensureCollection(ctx, db, collName)
 		if err != nil {
@@ -553,19 +560,76 @@ func ensureDBSchema(ctx context.Context, db *mongo.Database, log *logrus.Logger)
 		}
 
 		iv := coll.Indexes()
-		names, err := iv.CreateMany(ctx, models, icOpts)
+		names, err := iv.CreateMany(ctx, models, opts)
 		if err != nil {
 			// if the index creation fails, compose the error but continue to
 			// try and ensure the rest of the database schema
-			icErr = errors.Compose(icErr, errors.AddContext(err, fmt.Sprintf("collection '%v'", collName)))
+			createErr = errors.Compose(createErr, errors.AddContext(err, fmt.Sprintf("collection '%v'", collName)))
 			continue
 		}
+
 		log.Debugf("Ensured index exists: %v | %v", collName, names)
 	}
-	if icErr != nil {
-		return errors.Compose(icErr, ErrIndexCreateFailed)
+	if createErr != nil {
+		createErr = errors.Compose(createErr, ErrIndexCreateFailed)
 	}
-	return nil
+
+	// drop the old indices on 'skylink'
+	_, err1 := dropIndex(ctx, db.Collection(collAllowlist), "skylink")
+	_, err2 := dropIndex(ctx, db.Collection(collSkylinks), "skylink")
+	dropErr := errors.Compose(err1, err2)
+	if dropErr != nil {
+		dropErr = errors.Compose(dropErr, ErrIndexDropFailed)
+	}
+
+	return errors.Compose(createErr, dropErr)
+}
+
+// dropIndex is a helper function that drops the index with given name on the
+// given collection
+func dropIndex(ctx context.Context, coll *mongo.Collection, indexName string) (bool, error) {
+	hasIndex, err := hasIndex(ctx, coll, indexName)
+	if err != nil {
+		return false, err
+	}
+
+	if !hasIndex {
+		return false, nil
+	}
+
+	_, err = coll.Indexes().DropOne(ctx, indexName)
+	if err != nil {
+		return false, err
+	}
+
+	return true, nil
+}
+
+// hasIndex is a helper function that returns true if the given collection has
+// an index with given name
+func hasIndex(ctx context.Context, coll *mongo.Collection, indexName string) (bool, error) {
+	idxs := coll.Indexes()
+
+	cur, err := idxs.List(ctx)
+	if err != nil {
+		return false, err
+	}
+
+	var result []bson.M
+	err = cur.All(ctx, &result)
+	if err != nil {
+		return false, err
+	}
+
+	found := false
+	for _, v := range result {
+		for k, v1 := range v {
+			if k == "name" && v1 == indexName {
+				found = true
+			}
+		}
+	}
+	return found, nil
 }
 
 // ensureCollection gets the given collection from the

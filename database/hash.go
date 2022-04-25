@@ -73,7 +73,7 @@ func DiffHashes(array []Hash, others ...[]Hash) []Hash {
 // ever being blocked.
 type AllowListedSkylink struct {
 	ID             primitive.ObjectID `bson:"_id,omitempty"`
-	Skylink        string             `bson:"skylink"`
+	Hash           Hash               `bson:"hash"`
 	Description    string             `bson:"description"`
 	TimestampAdded time.Time          `bson:"timestamp_added"`
 }
@@ -87,7 +87,6 @@ type BlockedSkylink struct {
 	Reporter          Reporter           `bson:"reporter"`
 	Reverted          bool               `bson:"reverted"`
 	RevertedTags      []string           `bson:"reverted_tags"`
-	Skylink           string             `bson:"skylink"`
 	Tags              []string           `bson:"tags"`
 	TimestampAdded    time.Time          `bson:"timestamp_added"`
 	TimestampReverted time.Time          `bson:"timestamp_reverted"`
