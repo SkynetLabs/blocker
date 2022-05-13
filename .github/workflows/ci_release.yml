@@ -90,5 +90,5 @@ jobs:
         with:
           docker_username: ${{ secrets.DOCKER_USERNAME}}
           docker_password: ${{ secrets.DOCKER_PASSWORD}}
-          docker_repository: skynetlabs/skynet-accounts
+          docker_repository: skynetlabs/blocker
           semver_version: ${{ needs.release.outputs.new_version }}
