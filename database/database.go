@@ -29,7 +29,7 @@ const (
 	mongoTestUsername = "admin"
 
 	// mongoTestPassword is the password used for the test database.
-	mongoTestPassword = "aO4tV5tC1oU3oQ7u"
+	mongoTestPassword = "aO4tV5tC1oU3oQ7u" // #nosec G101
 
 	// mongoTestConnString is the connection string used for the test database.
 	mongoTestConnString = "mongodb://localhost:37017"

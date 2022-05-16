@@ -33,25 +33,15 @@ vet:
 # markdown-spellcheck runs codespell on all markdown files that are not
 # vendored.
 markdown-spellcheck:
+	pip install codespell 1>/dev/null 2>&1
 	git ls-files "*.md" :\!:"vendor/**" | xargs codespell --check-filenames
 
 # lint runs golangci-lint (which includes golint, a spellcheck of the codebase,
 # and other linters), the custom analyzers, and also a markdown spellchecker.
 lint: fmt markdown-spellcheck vet
-	golint ./...
 	golangci-lint run -c .golangci.yml
 	go mod tidy
 	analyze -lockcheck -- $(pkgs)
-
-# lint-ci runs golint.
-lint-ci:
-# golint is skipped on Windows.
-ifneq ("$(OS)","Windows_NT")
-# Linux
-	go get -d golang.org/x/lint/golint
-	golint -min_confidence=1.0 -set_exit_status $(pkgs)
-	go mod tidy
-endif
 
 # Credentials and port we are going to use for our test MongoDB instance.
 MONGO_USER=admin
@@ -124,7 +114,7 @@ bench: fmt
 test:
 	go test -short -tags='debug testing netgo' -timeout=5s $(pkgs) -run=$(run) -count=$(count)
 
-test-long: lint lint-ci
+test-long: lint
 	@mkdir -p cover
 	GORACE='$(racevars)' go test -race --coverprofile='./cover/cover.out' -v -failfast -tags='testing debug netgo' -timeout=30s $(pkgs) -run=$(run) -count=$(count)
 
