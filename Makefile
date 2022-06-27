@@ -13,7 +13,6 @@ all: release
 
 deps:
 	go mod download
-	go mod tidy
 
 run = .
 
@@ -106,7 +105,7 @@ test-long: lint start-mongo test-long-ci stop-mongo
 
 # test-long-ci is for running tests on the CI where the mongo container needs to
 # be initailized separately
-test-long-ci: 
+test-long-ci:
 	@mkdir -p cover
 	GORACE='$(racevars)' go test -race -v -tags='testing debug netgo' -timeout=300s $(pkgs) -run=$(run) -count=$(count)
 
